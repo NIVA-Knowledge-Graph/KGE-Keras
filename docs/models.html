@@ -1,0 +1,1412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
+<meta name="generator" content="pdoc 0.7.4" />
+<title>KGEkeras.models API documentation</title>
+<meta name="description" content="" />
+<link href='https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.0/normalize.min.css' rel='stylesheet'>
+<link href='https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/8.0.0/sanitize.min.css' rel='stylesheet'>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" rel="stylesheet">
+<style>.flex{display:flex !important}body{line-height:1.5em}#content{padding:20px}#sidebar{padding:30px;overflow:hidden}.http-server-breadcrumbs{font-size:130%;margin:0 0 15px 0}#footer{font-size:.75em;padding:5px 30px;border-top:1px solid #ddd;text-align:right}#footer p{margin:0 0 0 1em;display:inline-block}#footer p:last-child{margin-right:30px}h1,h2,h3,h4,h5{font-weight:300}h1{font-size:2.5em;line-height:1.1em}h2{font-size:1.75em;margin:1em 0 .50em 0}h3{font-size:1.4em;margin:25px 0 10px 0}h4{margin:0;font-size:105%}a{color:#058;text-decoration:none;transition:color .3s ease-in-out}a:hover{color:#e82}.title code{font-weight:bold}h2[id^="header-"]{margin-top:2em}.ident{color:#900}pre code{background:#f8f8f8;font-size:.8em;line-height:1.4em}code{background:#f2f2f1;padding:1px 4px;overflow-wrap:break-word}h1 code{background:transparent}pre{background:#f8f8f8;border:0;border-top:1px solid #ccc;border-bottom:1px solid #ccc;margin:1em 0;padding:1ex}#http-server-module-list{display:flex;flex-flow:column}#http-server-module-list div{display:flex}#http-server-module-list dt{min-width:10%}#http-server-module-list p{margin-top:0}.toc ul,#index{list-style-type:none;margin:0;padding:0}#index code{background:transparent}#index h3{border-bottom:1px solid #ddd}#index ul{padding:0}#index h4{font-weight:bold}#index h4 + ul{margin-bottom:.6em}@media (min-width:200ex){#index .two-column{column-count:2}}@media (min-width:300ex){#index .two-column{column-count:3}}dl{margin-bottom:2em}dl dl:last-child{margin-bottom:4em}dd{margin:0 0 1em 3em}#header-classes + dl > dd{margin-bottom:3em}dd dd{margin-left:2em}dd p{margin:10px 0}.name{background:#eee;font-weight:bold;font-size:.85em;padding:5px 10px;display:inline-block;min-width:40%}.name:hover{background:#e0e0e0}.name > span:first-child{white-space:nowrap}.name.class > span:nth-child(2){margin-left:.4em}.inherited{color:#999;border-left:5px solid #eee;padding-left:1em}.inheritance em{font-style:normal;font-weight:bold}.desc h2{font-weight:400;font-size:1.25em}.desc h3{font-size:1em}.desc dt code{background:inherit}.source summary,.git-link-div{color:#666;text-align:right;font-weight:400;font-size:.8em;text-transform:uppercase}.source summary > *{white-space:nowrap;cursor:pointer}.git-link{color:inherit;margin-left:1em}.source pre{max-height:500px;overflow:auto;margin:0}.source pre code{font-size:12px;overflow:visible}.hlist{list-style:none}.hlist li{display:inline}.hlist li:after{content:',\2002'}.hlist li:last-child:after{content:none}.hlist .hlist{display:inline;padding-left:1em}img{max-width:100%}.admonition{padding:.1em .5em;margin-bottom:1em}.admonition-title{font-weight:bold}.admonition.note,.admonition.info,.admonition.important{background:#aef}.admonition.todo,.admonition.versionadded,.admonition.tip,.admonition.hint{background:#dfd}.admonition.warning,.admonition.versionchanged,.admonition.deprecated{background:#fd4}.admonition.error,.admonition.danger,.admonition.caution{background:lightpink}</style>
+<style media="screen and (min-width: 700px)">@media screen and (min-width:700px){#sidebar{width:30%}#content{width:70%;max-width:100ch;padding:3em 4em;border-left:1px solid #ddd}pre code{font-size:1em}.item .name{font-size:1em}main{display:flex;flex-direction:row-reverse;justify-content:flex-end}.toc ul ul,#index ul{padding-left:1.5em}.toc > ul > li{margin-top:.5em}}</style>
+<style media="print">@media print{#sidebar h1{page-break-before:always}.source{display:none}}@media print{*{background:transparent !important;color:#000 !important;box-shadow:none !important;text-shadow:none !important}a[href]:after{content:" (" attr(href) ")";font-size:90%}a[href][title]:after{content:none}abbr[title]:after{content:" (" attr(title) ")"}.ir a:after,a[href^="javascript:"]:after,a[href^="#"]:after{content:""}pre,blockquote{border:1px solid #999;page-break-inside:avoid}thead{display:table-header-group}tr,img{page-break-inside:avoid}img{max-width:100% !important}@page{margin:0.5cm}p,h2,h3{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{page-break-after:avoid}}</style>
+</head>
+<body>
+<main>
+<article id="content">
+<header>
+<h1 class="title">Module <code>KGEkeras.models</code></h1>
+</header>
+<section id="section-intro">
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">### KG embedding version 3.
+
+from keras.models import Model
+from keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D
+from keras.losses import binary_crossentropy
+import keras.backend as K
+import tensorflow as tf
+import numpy as np
+
+class EmbeddingModel(Model):
+    def __init__(self, 
+                 e_dim, 
+                 r_dim, 
+                 num_entities, 
+                 num_relations, 
+                 negative_samples=2, 
+                 loss_function=binary_crossentropy, 
+                 use_bn=False, 
+                 use_dp=False, 
+                 name=&#39;EmbeddingModel&#39;,
+                 **kwargs):
+        &#34;&#34;&#34;
+        Base class for embedding models. 
+        
+        Parameters
+        ----------
+        e_dim : int 
+            Entity embedding dimension
+            
+        r_dim : int 
+            Relation embedding dimension
+        
+        num_entities : int 
+        
+        num_relations : int
+        
+        negative_samples : int 
+            Number of negative triples per true triple. 
+            
+        loss_function : keras.losses.Loss
+        
+        use_bn : bool 
+            Batch norm. 
+            
+        use_dp : bool 
+            Use dropout.
+        &#34;&#34;&#34;
+        super(EmbeddingModel, self).__init__(name=name,**kwargs)
+        self.num_entities = num_entities
+        self.num_relations = num_relations
+        self.entity_embedding = Embedding(num_entities, e_dim)
+        self.relational_embedding = Embedding(num_relations, r_dim)
+        self.negative_samples = negative_samples
+        self.loss_function = loss_function
+        self.use_dp = use_dp
+        self.use_bn = use_bn
+        
+    def build(self, input_shape):
+        self.batch_size = input_shape[0]
+        
+    def compute_output_shape(self,input_shape):
+        return (input_shape[0],1)
+    
+    def call(self,inputs,training=False):
+        &#34;&#34;&#34;
+        Parameters
+        ----------
+        inputs : tensor, shape = (batch_size, 3)
+        &#34;&#34;&#34;
+        s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
+        fs = tf.random.uniform(tf.repeat(s,self.negative_samples).shape,
+                               minval=0, 
+                               maxval=self.num_entities, 
+                               dtype=tf.dtypes.int32)
+        fp = tf.repeat(p,self.negative_samples)
+        fo = tf.random.uniform(tf.repeat(o,self.negative_samples).shape, 
+                               minval=0, 
+                               maxval=self.num_entities,
+                               dtype=tf.dtypes.int32)
+        
+        s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
+        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+        
+        if self.use_bn and training:
+            s,p,o = BatchNormalization()(s),BatchNormalization()(p),BatchNormalization()(o)
+            fs,fp,fo = BatchNormalization()(fs),BatchNormalization()(fp),BatchNormalization()(fo)
+        if self.use_dp and training:
+            s,p,o = Dropout(0.2)(s),Dropout(0.2)(p),Dropout(0.2)(o)
+            fs,fp,fo = Dropout(0.2)(fs),Dropout(0.2)(fp),Dropout(0.2)(fo)
+        
+        true_score = self.func(s,p,o,training)
+        false_score = self.func(fs,fp,fo,training)
+        
+        true_score = K.expand_dims(true_score)
+        false_score = K.expand_dims(false_score)
+        
+        true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
+        false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
+        
+        loss = 0.5*(true_loss + false_loss)
+        
+        self.add_loss(loss)
+        
+        return true_score
+
+class DistMult(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;DistMult&#39;, **kwargs):
+        &#34;&#34;&#34;DistMult implmentation.&#34;&#34;&#34;
+        super(DistMult, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+    
+    def func(self, s,p,o, training = False):
+        return tf.sigmoid(tf.reduce_sum(s*p*o,axis=-1))
+        
+
+class TransE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;TransE&#39;, norm=2, **kwargs):
+        &#34;&#34;&#34;TransE implmentation.&#34;&#34;&#34;
+        super(TransE, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.norm = norm
+        gamma = 1
+        self.loss_function = lambda y,yhat: tf.nn.relu(gamma+(2*y-1)*yhat)
+    
+    def func(self, s,p,o, training = False):
+        if training:
+            return tf.norm(s+p-o, axis=-1, ord=self.norm)
+        return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)
+
+class HolE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;HolE&#39;,**kwargs):
+        &#34;&#34;&#34;HolE implmentation.&#34;&#34;&#34;
+        super(HolE, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+    
+    def func(self, s,p,o, training = False):
+        def circular_cross_correlation(x, y):
+            return tf.math.real(tf.signal.ifft(
+            tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
+        
+        return tf.sigmoid(tf.reduce_sum(tf.multiply(p, circular_cross_correlation(s, o)), axis=-1))
+
+class ComplEx(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;ComplEx&#39;, norm=1,**kwargs):
+        &#34;&#34;&#34;ComplEx implmentation.&#34;&#34;&#34;
+        super(ComplEx, self).__init__(2*dim,
+                                       2*dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.norm = norm
+    
+    def func(self, s,p,o, training = False):
+        split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
+        s_real, s_img = split2(s)
+        p_real, p_img = split2(p)
+        o_real, o_img = split2(o)
+        
+        s1 = s_real*p_real*o_real 
+        s2 = p_real*s_img*o_img
+        s3 = p_img*s_real*o_img
+        s4 = p_img*s_img*o_real
+        s1 = tf.norm(s1, axis=-1, ord=self.norm)
+        s2 = tf.norm(s2, axis=-1, ord=self.norm)
+        s3 = tf.norm(s3, axis=-1, ord=self.norm)
+        s4 = tf.norm(s4, axis=-1, ord=self.norm)
+        return tf.sigmoid(s1+s2+s3-s4)
+
+
+class ConvE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;ConvE&#39;, hidden_dp=0.2, **kwargs):
+        &#34;&#34;&#34;ConvE implmentation.&#34;&#34;&#34;
+        super(ConvE, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.dim = dim
+        factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
+        self.w, self.h = factors(dim).pop(-1)
+        self.hidden_dp = hidden_dp
+    
+    def func(self, s,p,o, training = False):
+        s = Reshape((self.w,self.h))(s)
+        p = Reshape((self.w,self.h))(p)
+        x = Concatenate(axis=1)([s,p])
+        x = K.expand_dims(x,axis=-1)
+        
+        layers = [BatchNormalization(),
+                  Conv2D(32,(3,3)),
+                  Activation(&#39;relu&#39;),
+                  Dropout(self.hidden_dp),
+                  Activation(&#39;relu&#39;),
+                  Reshape((-1,)),
+                  Dense(self.dim)]
+        
+        for l in layers:
+            x = l(x)
+        
+        return tf.sigmoid(tf.reduce_sum(x * o,axis=-1))
+    
+class ConvR(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;ConvR&#39;, hidden_dp=0.2, **kwargs):
+        &#34;&#34;&#34;ConvR implmentation.&#34;&#34;&#34;
+        super(ConvR, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.dim = dim
+        factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
+        self.w, self.h = factors(dim).pop(-1)
+        self.hidden_dp = hidden_dp
+        self.relational_embedding = Embedding(num_relations,32*1*3*3)
+    
+    def func(self,s,p,o, training = False):
+        
+        x = Concatenate()([s,p])
+        
+        def forward(inputs):
+            a,b = inputs[:self.dim], inputs[self.dim:]
+            b = tf.reshape(b,(3,3,1,32))
+            a = tf.reshape(a,(1,self.w,self.h,1))
+            
+            x = tf.nn.conv2d(a, b, strides=2, padding=&#39;SAME&#39;)
+            x = tf.reshape(x,(-1,))
+            x = Activation(&#39;relu&#39;)(x)
+            
+            x = Dropout(self.hidden_dp)(x)
+            x = Activation(&#39;relu&#39;)(x)
+            x = tf.expand_dims(x,axis=0)
+            x = Dense(self.dim)(x)
+            
+            return x
+        
+        
+        x = tf.map_fn(forward, x)
+        x = tf.squeeze(x,1)
+        
+        return tf.sigmoid(tf.reduce_sum(x * o,axis=-1))
+    
+    
+
+class HAKE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma = 12,  loss_function=binary_crossentropy, name=&#39;HAKE&#39;,**kwargs):
+        &#34;&#34;&#34;HAKE implmentation.&#34;&#34;&#34;
+        super(HAKE, self).__init__(2*dim,
+                                       3*dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        
+        self.gamma = gamma
+        self.phase_weight = 0.5
+        self.mod_weight = 1.0
+        self.pi = 3.14
+        self.embedding_range = (gamma + epsilon) / dim
+    
+    def func(self, s,p,o, training = False):
+        split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
+        split3 = lambda x: tf.split(x,num_or_size_splits=3,axis=-1)
+        
+        phase_s, mod_s = split2(s)
+        phase_o, mod_o = split2(o)
+        phase_p, mod_p, bias_p = split3(p)
+        
+        phase_s = phase_s / (self.embedding_range / self.pi)
+        phase_p = phase_p / (self.embedding_range / self.pi)
+        phase_o = phase_o / (self.embedding_range / self.pi)
+        
+        bias_p = K.clip(bias_p,min_value=-np.Inf,max_value=1.)
+        bias_p = tf.where(bias_p &lt; -K.abs(mod_p), -K.abs(mod_p), bias_p)
+        
+        return self.gamma - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p)) + self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=2,axis=-1))
+        
+class ModE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma = 12, loss_function=binary_crossentropy, name=&#39;ModE&#39;,**kwargs):
+        &#34;&#34;&#34;ModE implmentation.&#34;&#34;&#34;
+        super(ModE, self).__init__(2*dim,
+                                       3*dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        
+        self.gamma = gamma
+        self.phase_weight = 0.5
+        self.mod_weight = 1.0
+        self.pi = 3.14
+        self.embedding_range = (gamma + epsilon) / dim
+    
+    def func(self, s,p,o, training = False):
+        return self.gamma - tf.norm(s * p - o, ord=1, axis=-1)
+    
+class Hybrid(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, models, negative_samples=2, loss_function=binary_crossentropy, name=&#39;Hybrid&#39;, **kwargs):
+        &#34;&#34;&#34;Hybrid model. Learns a weighted ensemble of models.&#34;&#34;&#34;
+        super(Hybrid, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        
+        self.models = models
+    
+    def call(self,inputs):
+        v = [m(inputs) for m in self.models]
+        v = Concatenate(axis=-1)(v)
+        return Dense(1, activation=&#39;sigmoid&#39;)(v)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    
+    
+    
+        
+        
+        </code></pre>
+</details>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+<h2 class="section-title" id="header-classes">Classes</h2>
+<dl>
+<dt id="KGEkeras.models.ComplEx"><code class="flex name class">
+<span>class <span class="ident">ComplEx</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='ComplEx', norm=1, **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>ComplEx implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class ComplEx(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;ComplEx&#39;, norm=1,**kwargs):
+        &#34;&#34;&#34;ComplEx implmentation.&#34;&#34;&#34;
+        super(ComplEx, self).__init__(2*dim,
+                                       2*dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.norm = norm
+    
+    def func(self, s,p,o, training = False):
+        split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
+        s_real, s_img = split2(s)
+        p_real, p_img = split2(p)
+        o_real, o_img = split2(o)
+        
+        s1 = s_real*p_real*o_real 
+        s2 = p_real*s_img*o_img
+        s3 = p_img*s_real*o_img
+        s4 = p_img*s_img*o_real
+        s1 = tf.norm(s1, axis=-1, ord=self.norm)
+        s2 = tf.norm(s2, axis=-1, ord=self.norm)
+        s3 = tf.norm(s3, axis=-1, ord=self.norm)
+        s4 = tf.norm(s4, axis=-1, ord=self.norm)
+        return tf.sigmoid(s1+s2+s3-s4)</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.ComplEx.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
+    s_real, s_img = split2(s)
+    p_real, p_img = split2(p)
+    o_real, o_img = split2(o)
+    
+    s1 = s_real*p_real*o_real 
+    s2 = p_real*s_img*o_img
+    s3 = p_img*s_real*o_img
+    s4 = p_img*s_img*o_real
+    s1 = tf.norm(s1, axis=-1, ord=self.norm)
+    s2 = tf.norm(s2, axis=-1, ord=self.norm)
+    s3 = tf.norm(s3, axis=-1, ord=self.norm)
+    s4 = tf.norm(s4, axis=-1, ord=self.norm)
+    return tf.sigmoid(s1+s2+s3-s4)</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.ConvE"><code class="flex name class">
+<span>class <span class="ident">ConvE</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='ConvE', hidden_dp=0.2, **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>ConvE implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class ConvE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;ConvE&#39;, hidden_dp=0.2, **kwargs):
+        &#34;&#34;&#34;ConvE implmentation.&#34;&#34;&#34;
+        super(ConvE, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.dim = dim
+        factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
+        self.w, self.h = factors(dim).pop(-1)
+        self.hidden_dp = hidden_dp
+    
+    def func(self, s,p,o, training = False):
+        s = Reshape((self.w,self.h))(s)
+        p = Reshape((self.w,self.h))(p)
+        x = Concatenate(axis=1)([s,p])
+        x = K.expand_dims(x,axis=-1)
+        
+        layers = [BatchNormalization(),
+                  Conv2D(32,(3,3)),
+                  Activation(&#39;relu&#39;),
+                  Dropout(self.hidden_dp),
+                  Activation(&#39;relu&#39;),
+                  Reshape((-1,)),
+                  Dense(self.dim)]
+        
+        for l in layers:
+            x = l(x)
+        
+        return tf.sigmoid(tf.reduce_sum(x * o,axis=-1))</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.ConvE.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    s = Reshape((self.w,self.h))(s)
+    p = Reshape((self.w,self.h))(p)
+    x = Concatenate(axis=1)([s,p])
+    x = K.expand_dims(x,axis=-1)
+    
+    layers = [BatchNormalization(),
+              Conv2D(32,(3,3)),
+              Activation(&#39;relu&#39;),
+              Dropout(self.hidden_dp),
+              Activation(&#39;relu&#39;),
+              Reshape((-1,)),
+              Dense(self.dim)]
+    
+    for l in layers:
+        x = l(x)
+    
+    return tf.sigmoid(tf.reduce_sum(x * o,axis=-1))</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.ConvR"><code class="flex name class">
+<span>class <span class="ident">ConvR</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='ConvR', hidden_dp=0.2, **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>ConvR implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class ConvR(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;ConvR&#39;, hidden_dp=0.2, **kwargs):
+        &#34;&#34;&#34;ConvR implmentation.&#34;&#34;&#34;
+        super(ConvR, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.dim = dim
+        factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
+        self.w, self.h = factors(dim).pop(-1)
+        self.hidden_dp = hidden_dp
+        self.relational_embedding = Embedding(num_relations,32*1*3*3)
+    
+    def func(self,s,p,o, training = False):
+        
+        x = Concatenate()([s,p])
+        
+        def forward(inputs):
+            a,b = inputs[:self.dim], inputs[self.dim:]
+            b = tf.reshape(b,(3,3,1,32))
+            a = tf.reshape(a,(1,self.w,self.h,1))
+            
+            x = tf.nn.conv2d(a, b, strides=2, padding=&#39;SAME&#39;)
+            x = tf.reshape(x,(-1,))
+            x = Activation(&#39;relu&#39;)(x)
+            
+            x = Dropout(self.hidden_dp)(x)
+            x = Activation(&#39;relu&#39;)(x)
+            x = tf.expand_dims(x,axis=0)
+            x = Dense(self.dim)(x)
+            
+            return x
+        
+        
+        x = tf.map_fn(forward, x)
+        x = tf.squeeze(x,1)
+        
+        return tf.sigmoid(tf.reduce_sum(x * o,axis=-1))</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.ConvR.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self,s,p,o, training = False):
+    
+    x = Concatenate()([s,p])
+    
+    def forward(inputs):
+        a,b = inputs[:self.dim], inputs[self.dim:]
+        b = tf.reshape(b,(3,3,1,32))
+        a = tf.reshape(a,(1,self.w,self.h,1))
+        
+        x = tf.nn.conv2d(a, b, strides=2, padding=&#39;SAME&#39;)
+        x = tf.reshape(x,(-1,))
+        x = Activation(&#39;relu&#39;)(x)
+        
+        x = Dropout(self.hidden_dp)(x)
+        x = Activation(&#39;relu&#39;)(x)
+        x = tf.expand_dims(x,axis=0)
+        x = Dense(self.dim)(x)
+        
+        return x
+    
+    
+    x = tf.map_fn(forward, x)
+    x = tf.squeeze(x,1)
+    
+    return tf.sigmoid(tf.reduce_sum(x * o,axis=-1))</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.DistMult"><code class="flex name class">
+<span>class <span class="ident">DistMult</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='DistMult', **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>DistMult implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class DistMult(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;DistMult&#39;, **kwargs):
+        &#34;&#34;&#34;DistMult implmentation.&#34;&#34;&#34;
+        super(DistMult, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+    
+    def func(self, s,p,o, training = False):
+        return tf.sigmoid(tf.reduce_sum(s*p*o,axis=-1))</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.DistMult.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    return tf.sigmoid(tf.reduce_sum(s*p*o,axis=-1))</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.EmbeddingModel"><code class="flex name class">
+<span>class <span class="ident">EmbeddingModel</span></span>
+<span>(</span><span>e_dim, r_dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, use_bn=False, use_dp=False, name='EmbeddingModel', **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>Base class for embedding models. </p>
+<h2 id="parameters">Parameters</h2>
+<dl>
+<dt><strong><code>e_dim</code></strong> :&ensp;<code>int</code></dt>
+<dd>Entity embedding dimension</dd>
+<dt><strong><code>r_dim</code></strong> :&ensp;<code>int</code></dt>
+<dd>Relation embedding dimension</dd>
+<dt><strong><code>num_entities</code></strong> :&ensp;<code>int</code></dt>
+<dd>&nbsp;</dd>
+<dt><strong><code>num_relations</code></strong> :&ensp;<code>int</code></dt>
+<dd>&nbsp;</dd>
+<dt><strong><code>negative_samples</code></strong> :&ensp;<code>int</code></dt>
+<dd>Number of negative triples per true triple.</dd>
+<dt><strong><code>loss_function</code></strong> :&ensp;<code>keras.losses.Loss</code></dt>
+<dd>&nbsp;</dd>
+<dt><strong><code>use_bn</code></strong> :&ensp;<code>bool</code></dt>
+<dd>Batch norm.</dd>
+<dt><strong><code>use_dp</code></strong> :&ensp;<code>bool</code></dt>
+<dd>Use dropout.</dd>
+</dl></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class EmbeddingModel(Model):
+    def __init__(self, 
+                 e_dim, 
+                 r_dim, 
+                 num_entities, 
+                 num_relations, 
+                 negative_samples=2, 
+                 loss_function=binary_crossentropy, 
+                 use_bn=False, 
+                 use_dp=False, 
+                 name=&#39;EmbeddingModel&#39;,
+                 **kwargs):
+        &#34;&#34;&#34;
+        Base class for embedding models. 
+        
+        Parameters
+        ----------
+        e_dim : int 
+            Entity embedding dimension
+            
+        r_dim : int 
+            Relation embedding dimension
+        
+        num_entities : int 
+        
+        num_relations : int
+        
+        negative_samples : int 
+            Number of negative triples per true triple. 
+            
+        loss_function : keras.losses.Loss
+        
+        use_bn : bool 
+            Batch norm. 
+            
+        use_dp : bool 
+            Use dropout.
+        &#34;&#34;&#34;
+        super(EmbeddingModel, self).__init__(name=name,**kwargs)
+        self.num_entities = num_entities
+        self.num_relations = num_relations
+        self.entity_embedding = Embedding(num_entities, e_dim)
+        self.relational_embedding = Embedding(num_relations, r_dim)
+        self.negative_samples = negative_samples
+        self.loss_function = loss_function
+        self.use_dp = use_dp
+        self.use_bn = use_bn
+        
+    def build(self, input_shape):
+        self.batch_size = input_shape[0]
+        
+    def compute_output_shape(self,input_shape):
+        return (input_shape[0],1)
+    
+    def call(self,inputs,training=False):
+        &#34;&#34;&#34;
+        Parameters
+        ----------
+        inputs : tensor, shape = (batch_size, 3)
+        &#34;&#34;&#34;
+        s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
+        fs = tf.random.uniform(tf.repeat(s,self.negative_samples).shape,
+                               minval=0, 
+                               maxval=self.num_entities, 
+                               dtype=tf.dtypes.int32)
+        fp = tf.repeat(p,self.negative_samples)
+        fo = tf.random.uniform(tf.repeat(o,self.negative_samples).shape, 
+                               minval=0, 
+                               maxval=self.num_entities,
+                               dtype=tf.dtypes.int32)
+        
+        s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
+        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+        
+        if self.use_bn and training:
+            s,p,o = BatchNormalization()(s),BatchNormalization()(p),BatchNormalization()(o)
+            fs,fp,fo = BatchNormalization()(fs),BatchNormalization()(fp),BatchNormalization()(fo)
+        if self.use_dp and training:
+            s,p,o = Dropout(0.2)(s),Dropout(0.2)(p),Dropout(0.2)(o)
+            fs,fp,fo = Dropout(0.2)(fs),Dropout(0.2)(fp),Dropout(0.2)(fo)
+        
+        true_score = self.func(s,p,o,training)
+        false_score = self.func(fs,fp,fo,training)
+        
+        true_score = K.expand_dims(true_score)
+        false_score = K.expand_dims(false_score)
+        
+        true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
+        false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
+        
+        loss = 0.5*(true_loss + false_loss)
+        
+        self.add_loss(loss)
+        
+        return true_score</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Subclasses</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.ComplEx" href="#KGEkeras.models.ComplEx">ComplEx</a></li>
+<li><a title="KGEkeras.models.ConvE" href="#KGEkeras.models.ConvE">ConvE</a></li>
+<li><a title="KGEkeras.models.ConvR" href="#KGEkeras.models.ConvR">ConvR</a></li>
+<li><a title="KGEkeras.models.DistMult" href="#KGEkeras.models.DistMult">DistMult</a></li>
+<li><a title="KGEkeras.models.HAKE" href="#KGEkeras.models.HAKE">HAKE</a></li>
+<li><a title="KGEkeras.models.HolE" href="#KGEkeras.models.HolE">HolE</a></li>
+<li><a title="KGEkeras.models.Hybrid" href="#KGEkeras.models.Hybrid">Hybrid</a></li>
+<li><a title="KGEkeras.models.ModE" href="#KGEkeras.models.ModE">ModE</a></li>
+<li><a title="KGEkeras.models.TransE" href="#KGEkeras.models.TransE">TransE</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.EmbeddingModel.build"><code class="name flex">
+<span>def <span class="ident">build</span></span>(<span>self, input_shape)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>Creates the layer weights.</p>
+<p>Must be implemented on all layers that have weights.</p>
+<h1 id="arguments">Arguments</h1>
+<pre><code>input_shape: Keras tensor (future input to layer)
+    or list/tuple of Keras tensors to reference
+    for weight shape computations.
+</code></pre></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def build(self, input_shape):
+    self.batch_size = input_shape[0]</code></pre>
+</details>
+</dd>
+<dt id="KGEkeras.models.EmbeddingModel.call"><code class="name flex">
+<span>def <span class="ident">call</span></span>(<span>self, inputs, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"><h2 id="parameters">Parameters</h2>
+<dl>
+<dt><strong><code>inputs</code></strong> :&ensp;<code>tensor</code>, <code>shape</code> = (<code>batch_size</code>, <code>3</code>)</dt>
+<dd>&nbsp;</dd>
+</dl></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def call(self,inputs,training=False):
+    &#34;&#34;&#34;
+    Parameters
+    ----------
+    inputs : tensor, shape = (batch_size, 3)
+    &#34;&#34;&#34;
+    s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
+    fs = tf.random.uniform(tf.repeat(s,self.negative_samples).shape,
+                           minval=0, 
+                           maxval=self.num_entities, 
+                           dtype=tf.dtypes.int32)
+    fp = tf.repeat(p,self.negative_samples)
+    fo = tf.random.uniform(tf.repeat(o,self.negative_samples).shape, 
+                           minval=0, 
+                           maxval=self.num_entities,
+                           dtype=tf.dtypes.int32)
+    
+    s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
+    fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+    
+    if self.use_bn and training:
+        s,p,o = BatchNormalization()(s),BatchNormalization()(p),BatchNormalization()(o)
+        fs,fp,fo = BatchNormalization()(fs),BatchNormalization()(fp),BatchNormalization()(fo)
+    if self.use_dp and training:
+        s,p,o = Dropout(0.2)(s),Dropout(0.2)(p),Dropout(0.2)(o)
+        fs,fp,fo = Dropout(0.2)(fs),Dropout(0.2)(fp),Dropout(0.2)(fo)
+    
+    true_score = self.func(s,p,o,training)
+    false_score = self.func(fs,fp,fo,training)
+    
+    true_score = K.expand_dims(true_score)
+    false_score = K.expand_dims(false_score)
+    
+    true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
+    false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
+    
+    loss = 0.5*(true_loss + false_loss)
+    
+    self.add_loss(loss)
+    
+    return true_score</code></pre>
+</details>
+</dd>
+<dt id="KGEkeras.models.EmbeddingModel.compute_output_shape"><code class="name flex">
+<span>def <span class="ident">compute_output_shape</span></span>(<span>self, input_shape)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>Computes the output shape of the layer.</p>
+<p>Assumes that the layer will be built
+to match that input shape provided.</p>
+<h1 id="arguments">Arguments</h1>
+<pre><code>input_shape: Shape tuple (tuple of integers)
+    or list of shape tuples (one per output tensor of the layer).
+    Shape tuples can include None for free dimensions,
+    instead of an integer.
+</code></pre>
+<h1 id="returns">Returns</h1>
+<pre><code>An output shape tuple.
+</code></pre></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def compute_output_shape(self,input_shape):
+    return (input_shape[0],1)</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="KGEkeras.models.HAKE"><code class="flex name class">
+<span>class <span class="ident">HAKE</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma=12, loss_function=&lt;function binary_crossentropy&gt;, name='HAKE', **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>HAKE implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class HAKE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma = 12,  loss_function=binary_crossentropy, name=&#39;HAKE&#39;,**kwargs):
+        &#34;&#34;&#34;HAKE implmentation.&#34;&#34;&#34;
+        super(HAKE, self).__init__(2*dim,
+                                       3*dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        
+        self.gamma = gamma
+        self.phase_weight = 0.5
+        self.mod_weight = 1.0
+        self.pi = 3.14
+        self.embedding_range = (gamma + epsilon) / dim
+    
+    def func(self, s,p,o, training = False):
+        split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
+        split3 = lambda x: tf.split(x,num_or_size_splits=3,axis=-1)
+        
+        phase_s, mod_s = split2(s)
+        phase_o, mod_o = split2(o)
+        phase_p, mod_p, bias_p = split3(p)
+        
+        phase_s = phase_s / (self.embedding_range / self.pi)
+        phase_p = phase_p / (self.embedding_range / self.pi)
+        phase_o = phase_o / (self.embedding_range / self.pi)
+        
+        bias_p = K.clip(bias_p,min_value=-np.Inf,max_value=1.)
+        bias_p = tf.where(bias_p &lt; -K.abs(mod_p), -K.abs(mod_p), bias_p)
+        
+        return self.gamma - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p)) + self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=2,axis=-1))</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.HAKE.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
+    split3 = lambda x: tf.split(x,num_or_size_splits=3,axis=-1)
+    
+    phase_s, mod_s = split2(s)
+    phase_o, mod_o = split2(o)
+    phase_p, mod_p, bias_p = split3(p)
+    
+    phase_s = phase_s / (self.embedding_range / self.pi)
+    phase_p = phase_p / (self.embedding_range / self.pi)
+    phase_o = phase_o / (self.embedding_range / self.pi)
+    
+    bias_p = K.clip(bias_p,min_value=-np.Inf,max_value=1.)
+    bias_p = tf.where(bias_p &lt; -K.abs(mod_p), -K.abs(mod_p), bias_p)
+    
+    return self.gamma - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p)) + self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=2,axis=-1))</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.HolE"><code class="flex name class">
+<span>class <span class="ident">HolE</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='HolE', **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>HolE implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class HolE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;HolE&#39;,**kwargs):
+        &#34;&#34;&#34;HolE implmentation.&#34;&#34;&#34;
+        super(HolE, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+    
+    def func(self, s,p,o, training = False):
+        def circular_cross_correlation(x, y):
+            return tf.math.real(tf.signal.ifft(
+            tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
+        
+        return tf.sigmoid(tf.reduce_sum(tf.multiply(p, circular_cross_correlation(s, o)), axis=-1))</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.HolE.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    def circular_cross_correlation(x, y):
+        return tf.math.real(tf.signal.ifft(
+        tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
+    
+    return tf.sigmoid(tf.reduce_sum(tf.multiply(p, circular_cross_correlation(s, o)), axis=-1))</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.Hybrid"><code class="flex name class">
+<span>class <span class="ident">Hybrid</span></span>
+<span>(</span><span>dim, num_entities, num_relations, models, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='Hybrid', **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>Hybrid model. Learns a weighted ensemble of models.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class Hybrid(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, models, negative_samples=2, loss_function=binary_crossentropy, name=&#39;Hybrid&#39;, **kwargs):
+        &#34;&#34;&#34;Hybrid model. Learns a weighted ensemble of models.&#34;&#34;&#34;
+        super(Hybrid, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        
+        self.models = models
+    
+    def call(self,inputs):
+        v = [m(inputs) for m in self.models]
+        v = Concatenate(axis=-1)(v)
+        return Dense(1, activation=&#39;sigmoid&#39;)(v)</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.ModE"><code class="flex name class">
+<span>class <span class="ident">ModE</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma=12, loss_function=&lt;function binary_crossentropy&gt;, name='ModE', **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>ModE implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class ModE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma = 12, loss_function=binary_crossentropy, name=&#39;ModE&#39;,**kwargs):
+        &#34;&#34;&#34;ModE implmentation.&#34;&#34;&#34;
+        super(ModE, self).__init__(2*dim,
+                                       3*dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        
+        self.gamma = gamma
+        self.phase_weight = 0.5
+        self.mod_weight = 1.0
+        self.pi = 3.14
+        self.embedding_range = (gamma + epsilon) / dim
+    
+    def func(self, s,p,o, training = False):
+        return self.gamma - tf.norm(s * p - o, ord=1, axis=-1)</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.ModE.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    return self.gamma - tf.norm(s * p - o, ord=1, axis=-1)</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.TransE"><code class="flex name class">
+<span>class <span class="ident">TransE</span></span>
+<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='TransE', norm=2, **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p>The <code>Model</code> class adds training &amp; evaluation routines to a <code>Network</code>.</p>
+<p>TransE implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class TransE(EmbeddingModel):
+    def __init__(self, dim, num_entities, num_relations, negative_samples=2, loss_function=binary_crossentropy, name=&#39;TransE&#39;, norm=2, **kwargs):
+        &#34;&#34;&#34;TransE implmentation.&#34;&#34;&#34;
+        super(TransE, self).__init__(dim,
+                                       dim,
+                                       num_entities,
+                                       num_relations,
+                                       negative_samples,
+                                       name=name,
+                                       **kwargs)
+        self.norm = norm
+        gamma = 1
+        self.loss_function = lambda y,yhat: tf.nn.relu(gamma+(2*y-1)*yhat)
+    
+    def func(self, s,p,o, training = False):
+        if training:
+            return tf.norm(s+p-o, axis=-1, ord=self.norm)
+        return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>keras.engine.training.Model</li>
+<li>keras.engine.network.Network</li>
+<li>keras.engine.base_layer.Layer</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.TransE.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    if training:
+        return tf.norm(s+p-o, axis=-1, ord=self.norm)
+    return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+</dl>
+</section>
+</article>
+<nav id="sidebar">
+<h1>Index</h1>
+<div class="toc">
+<ul></ul>
+</div>
+<ul id="index">
+<li><h3>Super-module</h3>
+<ul>
+<li><code><a title="KGEkeras" href="index.html">KGEkeras</a></code></li>
+</ul>
+</li>
+<li><h3><a href="#header-classes">Classes</a></h3>
+<ul>
+<li>
+<h4><code><a title="KGEkeras.models.ComplEx" href="#KGEkeras.models.ComplEx">ComplEx</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.ComplEx.func" href="#KGEkeras.models.ComplEx.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.ConvE" href="#KGEkeras.models.ConvE">ConvE</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.ConvE.func" href="#KGEkeras.models.ConvE.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.ConvR" href="#KGEkeras.models.ConvR">ConvR</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.ConvR.func" href="#KGEkeras.models.ConvR.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.DistMult" href="#KGEkeras.models.DistMult">DistMult</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.DistMult.func" href="#KGEkeras.models.DistMult.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.HAKE" href="#KGEkeras.models.HAKE">HAKE</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.HAKE.func" href="#KGEkeras.models.HAKE.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.HolE" href="#KGEkeras.models.HolE">HolE</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.HolE.func" href="#KGEkeras.models.HolE.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.Hybrid" href="#KGEkeras.models.Hybrid">Hybrid</a></code></h4>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.ModE" href="#KGEkeras.models.ModE">ModE</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.ModE.func" href="#KGEkeras.models.ModE.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.TransE" href="#KGEkeras.models.TransE">TransE</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.TransE.func" href="#KGEkeras.models.TransE.func">func</a></code></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+</main>
+<footer id="footer">
+<p>Generated by <a href="https://pdoc3.github.io/pdoc"><cite>pdoc</cite> 0.7.4</a>.</p>
+</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad()</script>
+</body>
+</html>
