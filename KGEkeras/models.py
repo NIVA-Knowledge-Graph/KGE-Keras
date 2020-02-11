@@ -108,56 +108,23 @@ class EmbeddingModel(tf.keras.Model):
         return true_score
 
 class DistMult(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name='DistMult', 
-                 hp=None, 
-                 use_bn = True, 
-                 dp = 0.2, 
                  **kwargs):
         """DistMult implmentation."""
-        super(DistMult, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        super(DistMult, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
         return tf.sigmoid(tf.reduce_sum(s*p*o, axis=-1))
         
 
 class TransE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name='TransE', 
-                 norm=2, 
-                 gamma=1, 
-                 hp=None, 
-                 use_bn = True, 
-                 dp = 0.2, 
+    def __init__(self, 
+                 name='TransE',
+                 norm=2,
                  **kwargs):
         """TransE implmentation."""
-        super(TransE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        super(TransE, self).__init__(**kwargs)
         
         self.norm = norm
         self.loss_function = lambda y,yhat: tf.nn.relu(gamma + y*yhat + (y-1)*yhat)
@@ -168,27 +135,11 @@ class TransE(EmbeddingModel):
         return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)
 
 class HolE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name='HolE', 
-                 hp=hp, 
-                 use_bn = True,
-                 dp = 0.2, 
                  **kwargs):
         """HolE implmentation."""
-        super(HolE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        super(HolE, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
         def circular_cross_correlation(x, y):
@@ -198,27 +149,14 @@ class HolE(EmbeddingModel):
         return tf.sigmoid(tf.reduce_sum(tf.multiply(p, circular_cross_correlation(s, o)), axis=-1))
 
 class ComplEx(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name='ComplEx', 
                  norm=1, 
-                 use_bn = True, 
-                 dp = 0.2,
-                 hp=None, **kwargs):
+                 **kwargs):
         """ComplEx implmentation."""
-        super(ComplEx, self).__init__(2*dim,
-                                       2*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        kwargs['e_dim'] = 2*kwargs['e_dim']
+        kwargs['r_dim'] = 2*kwargs['r_dim']
+        super(ComplEx, self).__init__(**kwargs)
         
         self.norm = norm
     
@@ -240,50 +178,27 @@ class ComplEx(EmbeddingModel):
 
 
 class ConvE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name='ConvE', 
                  hidden_dp=0.2,
-                 dp = 0.2,
-                 use_bn = True,
-                 hp=None, 
+                 conv_filters=8,
+                 conv_size_w=3, 
+                 conv_size_h=3,
                  **kwargs):
         """ConvE implmentation."""
-        super(ConvE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp
-                                       **kwargs)
-        self.dim = dim
+        super(ConvE, self).__init__(**kwargs)
+        
+        self.dim = kwargs['e_dim']
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
-        self.w, self.h = factors(dim).pop(-1)
+        self.w, self.h = factors(self.dim).pop(-1)
         
         self.hidden_dp = hidden_dp
     
-        if hp:
-            self.conv_filters = hp.Int('conv_filters',8,32,step=8,default=8)
-            self.conv_size_h = hp.Int('conv_size_h',2,5)
-            self.conv_size_w = hp.Int('conv_size_h',2,5)
-        else:
-            self.conv_filters = 8
-            self.conv_size_h = 3
-            self.conv_size_2 = 3
-            
-    def func(self, s,p,o, training = False):
-        s = Reshape((self.w,self.h))(s)
-        p = Reshape((self.w,self.h))(p)
-        x = Concatenate(axis=1)([s,p])
-        x = K.expand_dims(x,axis=-1)
+        self.conv_filters = conv_filters
+        self.conv_size_h = conv_size_h
+        self.conv_size_w = conv_size_w
         
-        layers = [BatchNormalization(),
+        self.ls = [BatchNormalization(),
                   Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
                   Activation('relu'),
                   Dropout(self.hidden_dp),
@@ -291,38 +206,40 @@ class ConvE(EmbeddingModel):
                   Reshape((-1,)),
                   Dense(self.dim)]
         
-        for l in layers:
+    def func(self, s,p,o, training = False):
+        s = Reshape((self.w,self.h))(s)
+        p = Reshape((self.w,self.h))(p)
+        x = Concatenate(axis=1)([s,p])
+        x = K.expand_dims(x,axis=-1)
+        
+        for l in self.ls:
             x = l(x)
         
         return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))
     
 class ConvR(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name='ConvR', 
-                 hidden_dp=0.2, 
-                 dp = 0.2,
-                 hp=None, 
+                 hidden_dp=0.2,
+                 conv_filters=8,
+                 conv_size_w=3, 
+                 conv_size_h=3,
                  **kwargs):
         """ConvR implmentation."""
-        super(ConvR, self).__init__(dim,
-                                       32*1*3*3,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       **kwargs)
-        self.dim = dim
+        kwargs['r_dim'] = conv_filters*conv_size_w*conv_size_h
+        super(ConvR, self).__init__(**kwargs)
+        
+        self.dim = kwargs['e_dim']
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
-        self.w, self.h = factors(dim).pop(-1)
+        self.w, self.h = factors(self.dim).pop(-1)
        
         self.hidden_dp = hidden_dp
+        self.conv_filters = conv_filters
+        self.conv_size_h = conv_size_h
+        self.conv_size_w = conv_size_w
+        
+        self.out = Dense(self.dim)
+            
  
     def func(self,s,p,o, training = False):
         
@@ -330,17 +247,17 @@ class ConvR(EmbeddingModel):
         
         def forward(inputs):
             a,b = inputs[:self.dim], inputs[self.dim:]
-            b = tf.reshape(b,(3,3,1,32))
+            b = tf.reshape(b,(self.conv_size_w,self.conv_size_h,1,self.conv_filters))
             a = tf.reshape(a,(1,self.w,self.h,1))
             
             x = tf.nn.conv2d(a, b, strides=2, padding='SAME')
             x = tf.reshape(x,(-1,))
             x = Activation('relu')(x)
             
+            x = tf.expand_dims(x,axis=0)
+            x = self.out(x)
             x = Dropout(self.hidden_dp)(x)
             x = Activation('relu')(x)
-            x = tf.expand_dims(x,axis=0)
-            x = Dense(self.dim)(x)
             
             return x
         
@@ -353,32 +270,18 @@ class ConvR(EmbeddingModel):
     
 
 class HAKE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
+    def __init__(self,
                  epsilon=2, 
                  gamma = 12,  
                  phase_weight = 0.5,
                  mod_weight = 1,
                  norm = 2,
-                 use_bn=True, 
-                 dp = 0.2,
-                 loss_function=binary_crossentropy, 
                  name='HAKE',
-                 hp=None, 
                  **kwargs):
         """HAKE implmentation."""
-        super(HAKE, self).__init__(2*dim,
-                                       3*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       **kwargs)
+        kwargs['e_dim'] = 2*kwargs['e_dim']
+        kwargs['r_dim'] = 3*kwargs['r_dim']
+        super(HAKE, self).__init__(**kwargs)
         
         self.gamma = gamma
         self.epsilon = epsilon
@@ -407,30 +310,15 @@ class HAKE(EmbeddingModel):
         return self.gamma - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p)) + self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=self.norm,axis=-1))
         
 class ModE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 epsilon=2, 
+    def __init__(self,
                  gamma = 12, 
                  norm = 2,
-                 loss_function=binary_crossentropy, 
-                 use_bn = True,
-                 dp = 0.2,
                  name='ModE', 
-                 hp=None, 
                  **kwargs):
         """ModE implmentation."""
-        super(ModE, self).__init__(2*dim,
-                                       3*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       hp=hp,
-                                       **kwargs)
+        kwargs['e_dim'] = 2*kwargs['e_dim']
+        kwargs['r_dim'] = 3*kwargs['r_dim']
+        super(ModE, self).__init__(**kwargs)
         
         self.gamma = gamma
         self.norm = norm
@@ -439,74 +327,38 @@ class ModE(EmbeddingModel):
         return self.gamma - tf.norm(s * p - o, ord=self.norm, axis=-1)
     
     
-def DenseModel(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations,
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name='Ensemble', 
-                 use_bn = True, 
-                 dp = 0.2, 
-                 hp = hp,
+class DenseModel(EmbeddingModel):
+    def __init__(self,
+                 name='Dense',
+                 hidden_units=[],
                  **kwargs):
         """Dense model."""
-        super(Hybrid, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       name=name,
-                                       hp = hp,
-                                       **kwargs)
-        
-        self.models = models
+        super(DenseModel, self).__init__(**kwargs)
+        self.ls = [Dense(i, activation='relu') for i in hidden_units]
+        self.output = Dense(1, activation='sigmoid')
     
     def func(self, s,p,o, training=False):
-        x = Concatenate(axis=-1)([s,p,o])
-        x = Dense(1, activation='sigmoid')
+        x = tf.concat([s,p,o],axis=-1)
+        for l in self.ls:
+            x = l(x)
+        x = self.output(x)
         return x
     
 class Ensemble(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
+    def __init__(self,
                  models, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name='Ensemble', 
-                 use_bn = True, 
-                 dp = 0.2, 
                  **kwargs):
         """Ensemble model. Outputs the ensemble mean."""
-        super(Hybrid, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       name=name,
-                                       **kwargs)
+        super(Hybrid, self).__init__(**kwargs)
         
         self.models = models
     
     def call(self,inputs):
         v = [m(inputs) for m in self.models]
-        
-        return tf.reduce_mean(v)
-        
+        return tf.reduce_mean(v, axis=-1)
         
         
-        
-        
-        
-        
-        
-        
-        
+    
         
         
     

@@ -1,6 +1,6 @@
 ### tests.py
 
-from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, Ensemble
+from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, Ensemble, DenseModel
 import numpy as np
 import tensorflow as tf
 from random import choice
@@ -93,7 +93,14 @@ class MyHyperModel(HyperModel):
         self.embedding_model = embedding_model
         
     def build(self, hp):
-        dm = self.embedding_model(hp.Int('embedding_dim',50,200), self.N, self.M, loss_function=binary_crossentropy,hp=hp,negative_samples=hp.Int('negative_samples', self.bs*2, self.bs*10))
+        dim = hp.Int('embedding_dim',50,200)
+        dm = self.embedding_model(e_dim=dim,
+                                  r_dim=dim,
+                                  dp=hp.Float('droupout',0.0,0.5),
+                                  num_entities=self.N, 
+                                  num_relations=self.M, loss_function=binary_crossentropy,
+                                  hp=hp,
+                                  negative_samples=hp.Int('negative_samples', self.bs*2, self.bs*10))
     
         model = MyModel(dm)
         optimizer = tf.keras.optimizers.Adam(learning_rate=hp.Float('learning_rate',1e-4,1e-2,sampling='log'))
