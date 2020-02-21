@@ -1,6 +1,6 @@
 ### tests.py
 
-from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, Ensemble, DenseModel
+from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, DenseModel, Hybrid, ConvKB
 import numpy as np
 import tensorflow as tf
 from random import choice
@@ -15,71 +15,11 @@ import kerastuner as kt
 from kerastuner import HyperModel
 from kerastuner.tuners import RandomSearch, Hyperband, BayesianOptimization
 
-from itertools import product
-
-def load_kg(path):
-    out = []
-    with open(path,'r') as f:
-        for l in f:
-            l = l.strip().split()
-            out.append(l)
-    return out
-
-def pad(l, bs):
-    num = bs - len(l) % bs
-    for _ in range(num):
-        l.append(choice(l))
-        
-def mrr(target, scores):
-    scores = sorted(scores, key=lambda x: x[1], reverse=True)
-    labels = [x for x,_ in scores]
-    return 1/(1+labels.index(target))
-
-def hits(target, scores, k=10):
-    scores = sorted(scores, key=lambda x: x[1], reverse=True)
-    labels = [x for x,_ in scores][:k]
-    return int(target in labels)
-        
-def validate(model, test_data, num_entities, filtering = False, train_triples = set()):
-    
-    metrics = defaultdict(list)
-    
-    tp = set([p for _,p,_ in test_data])
-    test_triples = list(product(range(num_entities),tp,range(num_entities)))
-    if filtering: test_triples = list( set(test_triples) - set(train_triples) )
-    
-    prediction = dict(zip(test_triples, model.predict(np.asarray(test_triples))))
-    prediction = defaultdict(lambda : 0, prediction)
-    
-    for s,p,o in test_data:
-        t = range(num_entities)
-        scores_t = [(x,prediction[(s,p,x)]) for x in t]
-        
-        h = range(num_entities)
-        scores_h = [(x,prediction[(x,p,o)]) for x in h]
-        
-        metrics['tail_mrr'].append(mrr(o,scores_t))
-        metrics['tail_h@1'].append(hits(o,scores_t,1))
-        metrics['tail_h@3'].append(hits(o,scores_t,3))
-        metrics['tail_h@10'].append(hits(o,scores_t,10))
-        
-        metrics['head_mrr'].append(mrr(s,scores_h))
-        metrics['head_h@1'].append(hits(s,scores_h,1))
-        metrics['head_h@3'].append(hits(s,scores_h,3))
-        metrics['head_h@10'].append(hits(s,scores_h,10))
-        
-    metrics = {k:np.mean(metrics[k]) for k in metrics}
-    tmp = {}
-    for k in metrics:
-        s = k.split('_')[-1]
-        tmp[s] = (metrics['tail_'+s]+metrics['head_'+s])/2
-    
-    return dict(metrics, **tmp)
-        
+from KGEkeras.utils import load_kg, validate
 
 class MyModel(tf.keras.Model):
-    def __init__(self, embedding_model):
-        super(MyModel, self).__init__()
+    def __init__(self, embedding_model,name='my_model'):
+        super(MyModel, self).__init__(name=name)
         self.embedding_model = embedding_model
         
     def call(self, inputs):
@@ -93,42 +33,50 @@ class MyHyperModel(HyperModel):
         self.embedding_model = embedding_model
         
     def build(self, hp):
-        dim = hp.Int('embedding_dim',50,200)
+        ns = self.bs*hp.Choice('negative_samples',[2,10,100])
+        dim = hp.Int('embedding_dim',50,200,step=50)
         dm = self.embedding_model(e_dim=dim,
                                   r_dim=dim,
-                                  dp=hp.Float('droupout',0.0,0.5),
-                                  num_entities=self.N, 
-                                  num_relations=self.M, loss_function=binary_crossentropy,
-                                  hp=hp,
-                                  negative_samples=hp.Int('negative_samples', self.bs*2, self.bs*10))
+                                  dp=hp.Float('dropout',0.0,0.5,step=0.1,default=0.2),
+                                  #hidden_dp=hp.Float('dropout',0.0,0.5,step=0.1,default=0.2),
+                                  #num_blocks=hp.Int('conv_blocks',1,4,default=1),
+                                  num_entities=self.N,
+                                  num_relations=self.M,
+                                  loss_function=binary_crossentropy,
+                                  negative_samples=ns)
     
         model = MyModel(dm)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=hp.Float('learning_rate',1e-4,1e-2,sampling='log'))
+        optimizer = tf.keras.optimizers.Adam(learning_rate=hp.Choice('learning_rate',[1e-4,1e-3,1e-2]))
     
-        model.compile(optimizer=optimizer, loss=lambda y,yhat:0.0, metrics=['acc'])
+        model.compile(optimizer=optimizer, loss=lambda y,yhat:0.0)
         
         return model
         
 class myCallBack(Callback):
-    def __init__(self, validation_data, *args, **kwargs):
+    def __init__(self, validation_data, train_data=None, *args, **kwargs):
         super(myCallBack, self).__init__(*args, **kwargs)
         self.validation_data = validation_data
-    
-    def on_epoch_end(self, epoch, logs=None):
-        if (epoch + 1) % 10 == 0:
-            tmp = validate(self.model, self.validation_data, self.model.embedding_model.num_entities)
-            
+        self.train_data = train_data
+        
+    def on_epoch_end(self, epoch, logs = None):
+        if epoch >= 10 and epoch % 10 == 0:
+            logs = logs or {}
+            tmp = validate(self.model, 
+                            self.validation_data,
+                            self.model.embedding_model.num_entities,
+                            self.train_data)
+                
             for k in tmp:
                 logs['val_'+k] = tmp[k]
-            print(logs['val_mrr'])
-            
+                
+    def on_train_end(self, logs=None):
+        self.on_epoch_end(100,logs=logs)
+        
 def main():
     
-    bs = 512
-    
-    train = load_kg('./data/kinship/train.txt')
-    valid = load_kg('./data/kinship/valid.txt')
-    test = load_kg('./data/kinship/test.txt')
+    train = load_kg('./data/nations/train.txt')
+    valid = load_kg('./data/nations/valid.txt')
+    test = load_kg('./data/nations/test.txt')
     
     E = set([a for a,b,c in train]) | set([c for a,b,c in train])
     E |= set([a for a,b,c in valid]) | set([c for a,b,c in valid])
@@ -145,27 +93,32 @@ def main():
     valid = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in valid]
     test = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in test]
     
+    bs = 16
     hypermodel = MyHyperModel(len(E),len(R),bs,embedding_model=DistMult)
     
     tuner = RandomSearch(
         hypermodel,
         objective=kt.Objective("val_mrr", direction="max"),
         max_trials=10,
-        seed=10,
+        seed=42,
         project_name=None)
     
     tuner.search(np.asarray(train),np.ones(len(train)),
              validation_data=(np.asarray(valid),np.ones(len(valid))),
-             epochs=100,
+             epochs=12,
              batch_size=bs,
-             callbacks = [myCallBack(np.asarray(valid)),
-                          EarlyStopping('val_loss',patience=2)])
+             callbacks = [myCallBack(np.asarray(valid),np.asarray(train)),
+                          EarlyStopping(monitor='loss',patience=2)])
              
+    tuner.results_summary()
+    
     best_model = tuner.get_best_models(1)[0]
     best_hyperparameters = tuner.get_best_hyperparameters(1)[0]
     
-    tuner.results_summary()
-    print(validate(best_model, test, len(E), filtering=True, train_triples=train))
+    print(validate(best_model, 
+                   np.asarray(test),
+                   best_model.embedding_model.num_entities,
+                   np.asarray(train)))
     
 if __name__ == '__main__':
     main()
