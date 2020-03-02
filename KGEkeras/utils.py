@@ -3,7 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from scipy.stats import rankdata
 
-from tf.keras.callbacks import Callback
+from tensorflow.keras.callbacks import Callback
 
 def load_kg(path):
     out = []
