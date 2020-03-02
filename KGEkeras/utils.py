@@ -3,6 +3,8 @@ import numpy as np
 from tqdm import tqdm
 from scipy.stats import rankdata
 
+from tf.keras.callbacks import Callback
+
 def load_kg(path):
     out = []
     with open(path,'r') as f:
@@ -113,4 +115,25 @@ def validate(model, test_data, num_entities, filtering_triples = None):
                }
     
     return metrics
+        
+        
+class KGEValidateCallback(Callback):
+    def __init__(self, validation_data, train_data=None, *args, **kwargs):
+        super(myCallBack, self).__init__(*args, **kwargs)
+        self.validation_data = validation_data
+        self.train_data = train_data
+        
+    def on_epoch_end(self, epoch, logs = None):
+        if epoch % 10 == 0:
+            logs = logs or {}
+            tmp = validate(self.model, 
+                            self.validation_data,
+                            self.model.embedding_model.num_entities,
+                            self.train_data)
+                
+            for k in tmp:
+                logs['val_'+k] = tmp[k]
+                
+    def on_train_end(self, logs=None):
+        self.on_epoch_end(100,logs=logs)
         

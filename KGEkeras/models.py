@@ -1,11 +1,31 @@
 ### KG embedding version 3.
 
-from keras.models import Model
-from keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D
-from keras.losses import binary_crossentropy
-import keras.backend as K
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D
+from tensorflow.keras.losses import binary_crossentropy
+import tensorflow.keras.backend as K
 import tensorflow as tf
 import numpy as np
+
+from tensorflow.keras.constraints import UnitNorm
+
+def pointwize_hinge(ytrue,ypred,margin=1):
+    return tf.reduce_sum(tf.nn.relu(margin-ytrue*ypred))
+
+def pointwize_logistic(ytrue,ypred):
+    return tf.reduce_sum(tf.math.log(1+tf.math.exp(-ytrue*ypred)))
+
+def pointwize_square_loss(ytrue,ypred,margin=1):
+    return 0.5 * tf.reduce_sum(tf.square(margin-ytrue*ypred))
+
+def pairwize_hinge(true,false,margin=1):
+    return tf.reduce_sum(tf.nn.relu(margin+false-true))
+
+def pairwize_logistic(true,false):
+    return tf.reduce_sum(tf.math.log(1+tf.math.exp(false-true)))
+
+def pairwize_square_loss(true,false):
+    return - tf.reduce_sum(tf.square(false-true))
 
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
@@ -14,10 +34,15 @@ class EmbeddingModel(tf.keras.Model):
                  num_entities, 
                  num_relations, 
                  negative_samples=2, 
-                 loss_function=binary_crossentropy,
+                 batch_size=16,
+                 loss_function='hinge',
+                 loss_type = 'pairwize',
                  name='EmbeddingModel',
                  use_bn = True, 
                  dp = 0.2,
+                 margin = 1,
+                 entity_embedding_args = None,
+                 relational_embedding_args = None,
                  **kwargs):
         """
         Base class for embedding models. 
@@ -37,7 +62,11 @@ class EmbeddingModel(tf.keras.Model):
         negative_samples : int 
             Number of negative triples per BATCH.
             
-        loss_function : keras.losses.Loss
+        loss_function : string
+            hinge, logistic, or square
+        
+        loss_type : string 
+            pointwize or pairwize
         
         use_bn : bool 
             Batch norm. 
@@ -45,24 +74,50 @@ class EmbeddingModel(tf.keras.Model):
         use_dp : bool 
             Use dropout.
         """
-        super(EmbeddingModel, self).__init__(name=name,**kwargs)
+        super(EmbeddingModel, self).__init__(name=name)
         self.num_entities = num_entities
         self.num_relations = num_relations
-        self.entity_embedding = Embedding(num_entities, e_dim)
-        self.relational_embedding = Embedding(num_relations, r_dim)
+        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim, **relational_embedding_args or {})
+        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim, **relational_embedding_args or {})
         self.loss_function = loss_function
         self.negative_samples = negative_samples
+        self.batch_size = batch_size
         self.e_dim = e_dim
         self.r_dim = r_dim
+        self.margin = margin
         
+        if loss_type == 'pointwize':
+            if self.loss_function == 'hinge':
+                lf = lambda x,y: pointwize_hinge(x,y,self.margin)
+            elif self.loss_function == 'logistic':
+                lf = pointwize_logistic
+            elif self.loss_function == 'square':
+                lf = pointwize_square_loss
+            else:
+                raise NotImplementedError(self.loss_function+' is not implemented.')
+            
+            self.lf = lambda true,false: lf(1,true) + lf(-1,false)
+            
+        else:
+            if self.loss_function == 'hinge':
+                lf = lambda x,y: pairwize_hinge(x,y,self.margin)
+            elif self.loss_function == 'logistic':
+                lf = pairwize_logistic
+            elif self.loss_function == 'square':
+                lf = pairwize_square
+            else:
+                raise NotImplementedError(self.loss_function+' is not implemented.')
+            
+            def pairwize(x,y):
+                fn = lambda a: tf.reduce_sum(lf(x,a))
+                return tf.reduce_sum(tf.map_fn(fn,y))
+                
+            self.lf = pairwize
+            
         self.dp = dp
         self.use_bn = use_bn
         
-    def build(self, input_shape):
-        self.batch_size = input_shape[0]
-        
-    def compute_output_shape(self,input_shape):
-        return (input_shape[0],1)
+        self.__dict__.update(kwargs)
     
     def call(self,inputs,training=False):
         """
@@ -71,36 +126,40 @@ class EmbeddingModel(tf.keras.Model):
         inputs : tensor, shape = (batch_size, 3)
         """
         s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
+        fp = p
         s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
         
+        s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
+            
         true_score = self.func(s,p,o,training)
         true_score = K.expand_dims(true_score)
         
-        true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
+        fs = tf.random.uniform((self.negative_samples*self.batch_size,),
+                            minval=0, 
+                            maxval=self.num_entities, 
+                            dtype=tf.dtypes.int32)
         
-        loss = true_loss
+        #sample random from true predicates
+        uniform_log_prob = tf.expand_dims(tf.zeros(tf.shape(p)[0]), 0)
+        samples = tf.random.categorical(uniform_log_prob,self.negative_samples*self.batch_size)
+        samples = tf.squeeze(samples, 0)
+        fp = tf.gather(fp, samples)
         
-        if training:
-            fs = tf.random.uniform((self.negative_samples,),
-                                minval=0, 
-                                maxval=self.num_entities, 
-                                dtype=tf.dtypes.int32)
-            fp = tf.random.uniform((self.negative_samples,), 
-                                minval=0, 
-                                maxval=self.num_relations,
-                                dtype=tf.dtypes.int32)
-            fo = tf.random.uniform((self.negative_samples,), 
-                                minval=0, 
-                                maxval=self.num_entities,
-                                dtype=tf.dtypes.int32)
-            
-            fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
-            fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
-            false_score = self.func(fs,fp,fo,training)
-            false_score = K.expand_dims(false_score)
-            false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
-            loss += false_loss
+        fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
+                            minval=0, 
+                            maxval=self.num_entities,
+                            dtype=tf.dtypes.int32)
+        
+        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+        fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
+        
+        fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
+        
+        false_score = self.func(fs,fp,fo,training)
+        false_score = K.expand_dims(false_score)
+        
+        loss = self.lf(true_score,false_score)
         
         self.add_loss(loss)
         
@@ -120,20 +179,15 @@ class DistMult(EmbeddingModel):
 class TransE(EmbeddingModel):
     def __init__(self, 
                  name='TransE',
-                 norm=2,
+                 norm=1,
                  **kwargs):
         """TransE implmentation."""
         super(TransE, self).__init__(name=name,**kwargs)
         
         self.norm = norm
-        gamma = 1
-        self.loss_function = lambda y,yhat: tf.nn.relu(gamma + y*yhat + (y-1)*yhat)
         
     def func(self, s,p,o, training = False):
-        if training:
-            return tf.norm(s+p-o, axis=-1, ord=self.norm)
-        else: 
-            return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)
+        return - tf.norm(s+p-o, axis=1, ord=self.norm)
 
 class ComplEx(EmbeddingModel):
     def __init__(self,
@@ -143,7 +197,6 @@ class ComplEx(EmbeddingModel):
         kwargs['e_dim'] = 2*kwargs['e_dim']
         kwargs['r_dim'] = 2*kwargs['r_dim']
         super(ComplEx, self).__init__(**kwargs)
-        
     
     def func(self, s,p,o, training = False):
         split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
@@ -403,6 +456,8 @@ class Hybrid(EmbeddingModel):
             if not k in self.models:
                 self.models[k] = default_model(**kwargs)
         self.models = list([i for k,i in self.models.items()])
+        
+        self.ensemble_layer = Dense(1,use_bias=False,kernel_constraint=UnitNorm())
     
     def call(self, inputs, training=False):
         
@@ -438,11 +493,12 @@ class Hybrid(EmbeddingModel):
         
         true_score = [tf.expand_dims(model.func(s,p,o),axis=-1) for model in self.models]
         true_score = tf.gather(true_score, ints)
-        true_score = tf.reduce_mean(true_score,axis=[-2,-1])
+        true_score = self.ensemble_layer(true_score)
+        
         
         false_score = [tf.expand_dims(model.func(fs,fp,fo),axis=-1) for model in self.models]
         false_score = tf.gather(false_score, f_ints)
-        false_score = tf.reduce_mean(false_score,axis=[-2,-1])
+        false_score = self.ensemble_layer(false_score)
         
         true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
         false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
