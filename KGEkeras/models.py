@@ -1,13 +1,15 @@
 ### KG embedding version 3.
 
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D
+from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D, Flatten
 from tensorflow.keras.losses import binary_crossentropy
 import tensorflow.keras.backend as K
 import tensorflow as tf
 import numpy as np
 
-from tensorflow.keras.constraints import UnitNorm
+from tensorflow.keras.initializers import glorot_normal
+
+from tensorflow.keras.constraints import UnitNorm, MaxNorm
 
 def pointwize_hinge(ytrue,ypred,margin=1):
     return tf.reduce_sum(tf.nn.relu(margin-ytrue*ypred))
@@ -41,6 +43,7 @@ class EmbeddingModel(tf.keras.Model):
                  use_bn = True, 
                  dp = 0.2,
                  margin = 1,
+                 loss_weight=1,
                  entity_embedding_args = None,
                  relational_embedding_args = None,
                  **kwargs):
@@ -77,22 +80,27 @@ class EmbeddingModel(tf.keras.Model):
         super(EmbeddingModel, self).__init__(name=name)
         self.num_entities = num_entities
         self.num_relations = num_relations
-        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim, **relational_embedding_args or {})
-        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim, **relational_embedding_args or {})
+        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim,embeddings_initializer=glorot_normal())
+        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim,embeddings_initializer=glorot_normal())
+        self.dp = dp
         self.loss_function = loss_function
         self.negative_samples = negative_samples
         self.batch_size = batch_size
         self.e_dim = e_dim
         self.r_dim = r_dim
         self.margin = margin
+        self.loss_weight = loss_weight
         
         if loss_type == 'pointwize':
             if self.loss_function == 'hinge':
                 lf = lambda x,y: pointwize_hinge(x,y,self.margin)
+                self.activation = tf.nn.relu
             elif self.loss_function == 'logistic':
                 lf = pointwize_logistic
+                self.activation = tf.sigmoid
             elif self.loss_function == 'square':
                 lf = pointwize_square_loss
+                self.activation = tf.sigmoid
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
@@ -101,10 +109,13 @@ class EmbeddingModel(tf.keras.Model):
         else:
             if self.loss_function == 'hinge':
                 lf = lambda x,y: pairwize_hinge(x,y,self.margin)
+                self.activation = tf.nn.relu
             elif self.loss_function == 'logistic':
                 lf = pairwize_logistic
+                self.activation = tf.sigmoid
             elif self.loss_function == 'square':
-                lf = pairwize_square
+                lf = pairwize_square_loss
+                self.activation = tf.sigmoid
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
@@ -113,9 +124,6 @@ class EmbeddingModel(tf.keras.Model):
                 return tf.reduce_sum(tf.map_fn(fn,y))
                 
             self.lf = pairwize
-            
-        self.dp = dp
-        self.use_bn = use_bn
         
         self.__dict__.update(kwargs)
     
@@ -159,7 +167,7 @@ class EmbeddingModel(tf.keras.Model):
         false_score = self.func(fs,fp,fo,training)
         false_score = K.expand_dims(false_score)
         
-        loss = self.lf(true_score,false_score)
+        loss = self.loss_weight*self.lf(true_score,false_score)
         
         self.add_loss(loss)
         
@@ -170,10 +178,11 @@ class DistMult(EmbeddingModel):
                  name='DistMult', 
                  **kwargs):
         """DistMult implmentation."""
+        self.activation = tf.sigmoid
         super(DistMult, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
-        return tf.sigmoid(tf.reduce_sum(s*p*o, axis=-1))
+        return self.activation(tf.reduce_sum(s*p*o, axis=-1))
         
 
 class TransE(EmbeddingModel):
@@ -196,6 +205,7 @@ class ComplEx(EmbeddingModel):
         """ComplEx implmentation."""
         kwargs['e_dim'] = 2*kwargs['e_dim']
         kwargs['r_dim'] = 2*kwargs['r_dim']
+        self.activation = tf.sigmoid
         super(ComplEx, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
@@ -212,13 +222,14 @@ class ComplEx(EmbeddingModel):
         s2 = tf.reduce_sum(s2, axis=-1)
         s3 = tf.reduce_sum(s3, axis=-1)
         s4 = tf.reduce_sum(s4, axis=-1)
-        return tf.sigmoid(s1+s2+s3-s4)
+        return self.activation(s1+s2+s3-s4)
 
 class HolE(EmbeddingModel):
     def __init__(self,
                  name='HolE', 
                  **kwargs):
         """HolE implmentation."""
+        self.activation = tf.sigmoid
         super(HolE, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
@@ -227,7 +238,7 @@ class HolE(EmbeddingModel):
             tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
         
         x = circular_cross_correlation(s,o)
-        return tf.sigmoid(tf.reduce_sum(p*x,axis=-1))
+        return self.activation(tf.reduce_sum(p*x,axis=-1))
 
 class ConvE(EmbeddingModel):
     def __init__(self,
@@ -238,6 +249,7 @@ class ConvE(EmbeddingModel):
                  conv_size_h=3,
                  **kwargs):
         """ConvE implmentation."""
+        self.activation = tf.sigmoid
         super(ConvE, self).__init__(**kwargs)
         
         self.dim = kwargs['e_dim']
@@ -254,7 +266,7 @@ class ConvE(EmbeddingModel):
                   Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
                   Activation('relu'),
                   Dropout(self.hidden_dp),
-                  Reshape((-1,)),
+                  Flatten(),
                   Dense(self.dim),
                   Activation('relu'),
                   Dropout(self.hidden_dp)]
@@ -268,7 +280,7 @@ class ConvE(EmbeddingModel):
         for l in self.ls:
             x = l(x)
         
-        return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))
+        return self.activation(tf.reduce_sum(x * o, axis=-1))
     
 class ConvR(EmbeddingModel):
     def __init__(self,
@@ -280,6 +292,7 @@ class ConvR(EmbeddingModel):
                  **kwargs):
         """ConvR implmentation."""
         kwargs['r_dim'] = conv_filters*conv_size_w*conv_size_h
+        self.activation = tf.sigmoid
         super(ConvR, self).__init__(**kwargs)
         
         self.dim = kwargs['e_dim']
@@ -313,11 +326,10 @@ class ConvR(EmbeddingModel):
             
             return x
         
-        
         x = tf.map_fn(forward, x)
         x = tf.squeeze(x,1)
         
-        return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))
+        return self.activation(tf.reduce_sum(x * o, axis=-1))
     
 class ConvKB(EmbeddingModel):
     def __init__(self,
@@ -327,6 +339,7 @@ class ConvKB(EmbeddingModel):
                  num_blocks = 1,
                  **kwargs):
         """ConvKB implmentation."""
+        self.activation = tf.sigmoid
         super(ConvKB, self).__init__(**kwargs)
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
         
@@ -360,7 +373,7 @@ class ConvKB(EmbeddingModel):
         for l in self.ls:
             x = l(x)
         
-        return tf.sigmoid(x)
+        return self.activation(x)
 
 class HAKE(EmbeddingModel):
     def __init__(self,
@@ -383,7 +396,7 @@ class HAKE(EmbeddingModel):
         self.norm = norm
         
         self.pi = np.pi
-        self.embedding_range = (self.gamma + self.epsilon) / dim
+        self.embedding_range = (self.gamma + self.epsilon) / self.e_dim / 2
         
     def func(self, s,p,o, training = False):
         split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
