@@ -120,8 +120,9 @@ class EmbeddingModel(tf.keras.Model):
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
             def pairwize(x,y):
-                fn = lambda a: tf.reduce_sum(lf(x,a))
-                return tf.reduce_sum(tf.map_fn(fn,y))
+                x = tf.repeat(x,self.negative_samples,0)
+                x = tf.reshape(x,(self.batch_size,self.negative_samples,1))
+                return lf(x,y)
                 
             self.lf = pairwize
         
@@ -149,10 +150,8 @@ class EmbeddingModel(tf.keras.Model):
                             dtype=tf.dtypes.int32)
         
         #sample random from true predicates
-        uniform_log_prob = tf.expand_dims(tf.zeros(tf.shape(p)[0]), 0)
-        samples = tf.random.categorical(uniform_log_prob,self.negative_samples*self.batch_size)
-        samples = tf.squeeze(samples, 0)
-        fp = tf.gather(fp, samples)
+        
+        fp = tf.repeat(fp, self.negative_samples, 0)
         
         fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
                             minval=0, 
@@ -166,6 +165,7 @@ class EmbeddingModel(tf.keras.Model):
         
         false_score = self.func(fs,fp,fo,training)
         false_score = K.expand_dims(false_score)
+        false_score = tf.reshape(false_score,(self.batch_size,self.negative_samples,1))
         
         loss = self.loss_weight*self.lf(true_score,false_score)
         
