@@ -140,13 +140,13 @@ class EmbeddingModel(tf.keras.Model):
         s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
         fp = p
         s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
+        
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
         
-        #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
-            
+            #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
         true_score = self.func(s,p,o,training)
         true_score = K.expand_dims(true_score)
-        
+            
         fs = tf.random.uniform((self.negative_samples*self.batch_size,),
                             minval=0, 
                             maxval=self.num_entities, 
