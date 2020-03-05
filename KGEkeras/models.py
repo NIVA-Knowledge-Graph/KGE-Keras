@@ -17,7 +17,7 @@ def pointwize_hinge(ytrue,ypred,margin=1):
 def pointwize_logistic(ytrue,ypred):
     return tf.reduce_sum(tf.math.log(1+tf.math.exp(-ytrue*ypred)))
 
-def pointwize_square_loss(ytrue,ypred,margin=1):
+def pointwize_square_loss(ytrue,ypred):
     return 0.5 * tf.reduce_sum(tf.square(margin-ytrue*ypred))
 
 def pairwize_hinge(true,false,margin=1):
@@ -91,39 +91,42 @@ class EmbeddingModel(tf.keras.Model):
         self.margin = margin
         self.loss_weight = loss_weight
         
+        if isinstance(self,TransE):
+            pos_label = -1
+            neg_label = 1
+            self.activation = tf.nn.relu
+        else:
+            pos_label = 1
+            neg_label = -1
+        
         if loss_type == 'pointwize':
+            
             if self.loss_function == 'hinge':
                 lf = lambda x,y: pointwize_hinge(x,y,self.margin)
-                self.activation = tf.nn.relu
             elif self.loss_function == 'logistic':
                 lf = pointwize_logistic
-                self.activation = tf.sigmoid
             elif self.loss_function == 'square':
                 lf = pointwize_square_loss
-                self.activation = tf.sigmoid
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
-            self.lf = lambda true,false: lf(1,true) + lf(-1,false)
+            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)
             
         else:
             if self.loss_function == 'hinge':
                 lf = lambda x,y: pairwize_hinge(x,y,self.margin)
-                self.activation = tf.nn.relu
             elif self.loss_function == 'logistic':
                 lf = pairwize_logistic
-                self.activation = tf.sigmoid
             elif self.loss_function == 'square':
                 lf = pairwize_square_loss
-                self.activation = tf.sigmoid
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
             def pairwize(x,y):
                 x = tf.repeat(x,self.negative_samples,0)
                 x = tf.reshape(x,(self.batch_size,self.negative_samples,1))
-                return lf(x,y)
-                
+                y = tf.reshape(y,(self.batch_size,self.negative_samples,1))
+                return lf(pos_label*x,neg_label*y)
             self.lf = pairwize
         
         self.__dict__.update(kwargs)
@@ -139,7 +142,7 @@ class EmbeddingModel(tf.keras.Model):
         s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
         
-        s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
+        #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
             
         true_score = self.func(s,p,o,training)
         true_score = K.expand_dims(true_score)
@@ -148,8 +151,6 @@ class EmbeddingModel(tf.keras.Model):
                             minval=0, 
                             maxval=self.num_entities, 
                             dtype=tf.dtypes.int32)
-        
-        #sample random from true predicates
         
         fp = tf.repeat(fp, self.negative_samples, 0)
         
@@ -161,11 +162,10 @@ class EmbeddingModel(tf.keras.Model):
         fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
         fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
         
-        fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
+        #fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
         
         false_score = self.func(fs,fp,fo,training)
         false_score = K.expand_dims(false_score)
-        false_score = tf.reshape(false_score,(self.batch_size,self.negative_samples,1))
         
         loss = self.loss_weight*self.lf(true_score,false_score)
         
@@ -196,7 +196,7 @@ class TransE(EmbeddingModel):
         self.norm = norm
         
     def func(self, s,p,o, training = False):
-        return - tf.norm(s+p-o, axis=1, ord=self.norm)
+        return tf.norm(s+p-o, axis=1, ord=self.norm)
 
 class ComplEx(EmbeddingModel):
     def __init__(self,
