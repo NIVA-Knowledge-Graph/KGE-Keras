@@ -26,14 +26,34 @@
 </summary>
 <pre><code class="python">### KG embedding version 3.
 
-from keras.models import Model
-from keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D
-from keras.losses import binary_crossentropy
-import keras.backend as K
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D, Flatten
+from tensorflow.keras.losses import binary_crossentropy
+import tensorflow.keras.backend as K
 import tensorflow as tf
 import numpy as np
 
-from hyperopt import hp
+from tensorflow.keras.initializers import glorot_normal
+
+from tensorflow.keras.constraints import UnitNorm, MaxNorm
+
+def pointwize_hinge(ytrue,ypred,margin=1):
+    return tf.reduce_sum(tf.nn.relu(margin-ytrue*ypred))
+
+def pointwize_logistic(ytrue,ypred):
+    return tf.reduce_sum(tf.math.log(1+tf.math.exp(-ytrue*ypred)))
+
+def pointwize_square_loss(ytrue,ypred):
+    return 0.5 * tf.reduce_sum(tf.square(margin-ytrue*ypred))
+
+def pairwize_hinge(true,false,margin=1):
+    return tf.reduce_sum(tf.nn.relu(margin+false-true))
+
+def pairwize_logistic(true,false):
+    return tf.reduce_sum(tf.math.log(1+tf.math.exp(false-true)))
+
+def pairwize_square_loss(true,false):
+    return - tf.reduce_sum(tf.square(false-true))
 
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
@@ -42,11 +62,16 @@ class EmbeddingModel(tf.keras.Model):
                  num_entities, 
                  num_relations, 
                  negative_samples=2, 
-                 loss_function=binary_crossentropy,
+                 batch_size=16,
+                 loss_function=&#39;hinge&#39;,
+                 loss_type = &#39;pairwize&#39;,
                  name=&#39;EmbeddingModel&#39;,
                  use_bn = True, 
                  dp = 0.2,
-                 hp=None,
+                 margin = 1,
+                 loss_weight=1,
+                 entity_embedding_args = None,
+                 relational_embedding_args = None,
                  **kwargs):
         &#34;&#34;&#34;
         Base class for embedding models. 
@@ -66,7 +91,11 @@ class EmbeddingModel(tf.keras.Model):
         negative_samples : int 
             Number of negative triples per BATCH.
             
-        loss_function : keras.losses.Loss
+        loss_function : string
+            hinge, logistic, or square
+        
+        loss_type : string 
+            pointwize or pairwize
         
         use_bn : bool 
             Batch norm. 
@@ -74,22 +103,59 @@ class EmbeddingModel(tf.keras.Model):
         use_dp : bool 
             Use dropout.
         &#34;&#34;&#34;
-        super(EmbeddingModel, self).__init__(name=name,**kwargs)
+        super(EmbeddingModel, self).__init__(name=name)
         self.num_entities = num_entities
         self.num_relations = num_relations
-        self.entity_embedding = Embedding(num_entities, e_dim)
-        self.relational_embedding = Embedding(num_relations, r_dim)
+        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim,embeddings_initializer=glorot_normal())
+        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim,embeddings_initializer=glorot_normal())
+        self.dp = dp
         self.loss_function = loss_function
         self.negative_samples = negative_samples
+        self.batch_size = batch_size
+        self.e_dim = e_dim
+        self.r_dim = r_dim
+        self.margin = margin
+        self.loss_weight = loss_weight
         
-        self.dp = dp
-        self.use_bn = use_bn
+        if isinstance(self,TransE):
+            pos_label = -1
+            neg_label = 1
+            self.activation = tf.nn.relu
+        else:
+            pos_label = 1
+            neg_label = -1
         
-    def build(self, input_shape):
-        self.batch_size = input_shape[0]
+        if loss_type == &#39;pointwize&#39;:
+            
+            if self.loss_function == &#39;hinge&#39;:
+                lf = lambda x,y: pointwize_hinge(x,y,self.margin)
+            elif self.loss_function == &#39;logistic&#39;:
+                lf = pointwize_logistic
+            elif self.loss_function == &#39;square&#39;:
+                lf = pointwize_square_loss
+            else:
+                raise NotImplementedError(self.loss_function+&#39; is not implemented.&#39;)
+            
+            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)
+            
+        else:
+            if self.loss_function == &#39;hinge&#39;:
+                lf = lambda x,y: pairwize_hinge(x,y,self.margin)
+            elif self.loss_function == &#39;logistic&#39;:
+                lf = pairwize_logistic
+            elif self.loss_function == &#39;square&#39;:
+                lf = pairwize_square_loss
+            else:
+                raise NotImplementedError(self.loss_function+&#39; is not implemented.&#39;)
+            
+            def pairwize(x,y):
+                x = tf.repeat(x,self.negative_samples,0)
+                x = tf.reshape(x,(self.batch_size,self.negative_samples,1))
+                y = tf.reshape(y,(self.batch_size,self.negative_samples,1))
+                return lf(pos_label*x,neg_label*y)
+            self.lf = pairwize
         
-    def compute_output_shape(self,input_shape):
-        return (input_shape[0],1)
+        self.__dict__.update(kwargs)
     
     def call(self,inputs,training=False):
         &#34;&#34;&#34;
@@ -98,155 +164,75 @@ class EmbeddingModel(tf.keras.Model):
         inputs : tensor, shape = (batch_size, 3)
         &#34;&#34;&#34;
         s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
-        
-        fs = tf.random.uniform((self.negative_samples,),
-                               minval=0, 
-                               maxval=self.num_entities, 
-                               dtype=tf.dtypes.int32)
-        fp = tf.random.uniform((self.negative_samples,), 
-                               minval=0, 
-                               maxval=self.num_relations,
-                               dtype=tf.dtypes.int32)
-        fo = tf.random.uniform((self.negative_samples,), 
-                               minval=0, 
-                               maxval=self.num_entities,
-                               dtype=tf.dtypes.int32)
-        
+        fp = p
         s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
-        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
         
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
+        
+            #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
+        true_score = self.func(s,p,o,training)
+        true_score = K.expand_dims(true_score)
+            
+        fs = tf.random.uniform((self.negative_samples*self.batch_size,),
+                            minval=0, 
+                            maxval=self.num_entities, 
+                            dtype=tf.dtypes.int32)
+        
+        fp = tf.repeat(fp, self.negative_samples, 0)
+        
+        fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
+                            minval=0, 
+                            maxval=self.num_entities,
+                            dtype=tf.dtypes.int32)
+        
+        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
         fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
         
-        true_score = self.func(s,p,o,training)
-        false_score = self.func(fs,fp,fo,training)
+        #fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
         
-        true_score = K.expand_dims(true_score)
+        false_score = self.func(fs,fp,fo,training)
         false_score = K.expand_dims(false_score)
         
-        true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
-        false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
-        
-        loss = 0.5*(true_loss + false_loss)
+        loss = self.loss_weight*self.lf(true_score,false_score)
         
         self.add_loss(loss)
         
         return true_score
 
 class DistMult(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name=&#39;DistMult&#39;, 
-                 hp=None, 
-                 use_bn = True, 
-                 dp = 0.2, 
                  **kwargs):
         &#34;&#34;&#34;DistMult implmentation.&#34;&#34;&#34;
-        super(DistMult, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        self.activation = tf.sigmoid
+        super(DistMult, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
-        return tf.sigmoid(tf.reduce_sum(s*p*o, axis=-1))
+        return self.activation(tf.reduce_sum(s*p*o, axis=-1))
         
 
 class TransE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;TransE&#39;, 
-                 norm=2, 
-                 gamma=1, 
-                 hp=None, 
-                 use_bn = True, 
-                 dp = 0.2, 
+    def __init__(self, 
+                 name=&#39;TransE&#39;,
+                 norm=1,
                  **kwargs):
         &#34;&#34;&#34;TransE implmentation.&#34;&#34;&#34;
-        super(TransE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        super(TransE, self).__init__(name=name,**kwargs)
         
         self.norm = norm
-        self.loss_function = lambda y,yhat: tf.nn.relu(gamma + y*yhat + (y-1)*yhat)
-    
-    def func(self, s,p,o, training = False):
-        if training:
-            return tf.norm(s+p-o, axis=-1, ord=self.norm)
-        return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)
-
-class HolE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;HolE&#39;, 
-                 hp=hp, 
-                 use_bn = True,
-                 dp = 0.2, 
-                 **kwargs):
-        &#34;&#34;&#34;HolE implmentation.&#34;&#34;&#34;
-        super(HolE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
-    
-    def func(self, s,p,o, training = False):
-        def circular_cross_correlation(x, y):
-            return tf.math.real(tf.signal.ifft(
-            tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
         
-        return tf.sigmoid(tf.reduce_sum(tf.multiply(p, circular_cross_correlation(s, o)), axis=-1))
+    def func(self, s,p,o, training = False):
+        return tf.norm(s+p-o, axis=1, ord=self.norm)
 
 class ComplEx(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name=&#39;ComplEx&#39;, 
-                 norm=1, 
-                 use_bn = True, 
-                 dp = 0.2,
-                 hp=None, **kwargs):
+                 **kwargs):
         &#34;&#34;&#34;ComplEx implmentation.&#34;&#34;&#34;
-        super(ComplEx, self).__init__(2*dim,
-                                       2*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
-        
-        self.norm = norm
+        kwargs[&#39;e_dim&#39;] = 2*kwargs[&#39;e_dim&#39;]
+        kwargs[&#39;r_dim&#39;] = 2*kwargs[&#39;r_dim&#39;]
+        self.activation = tf.sigmoid
+        super(ComplEx, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
         split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
@@ -254,157 +240,180 @@ class ComplEx(EmbeddingModel):
         p_real, p_img = split2(p)
         o_real, o_img = split2(o)
         
-        s1 = s_real*p_real*o_real 
+        s1 = s_real*p_real*o_real
         s2 = p_real*s_img*o_img
         s3 = p_img*s_real*o_img
         s4 = p_img*s_img*o_real
-        s1 = tf.norm(s1, axis=-1, ord=self.norm)
-        s2 = tf.norm(s2, axis=-1, ord=self.norm)
-        s3 = tf.norm(s3, axis=-1, ord=self.norm)
-        s4 = tf.norm(s4, axis=-1, ord=self.norm)
-        return tf.sigmoid(s1+s2+s3-s4)
+        s1 = tf.reduce_sum(s1, axis=-1)
+        s2 = tf.reduce_sum(s2, axis=-1)
+        s3 = tf.reduce_sum(s3, axis=-1)
+        s4 = tf.reduce_sum(s4, axis=-1)
+        return self.activation(s1+s2+s3-s4)
 
+class HolE(EmbeddingModel):
+    def __init__(self,
+                 name=&#39;HolE&#39;, 
+                 **kwargs):
+        &#34;&#34;&#34;HolE implmentation.&#34;&#34;&#34;
+        self.activation = tf.sigmoid
+        super(HolE, self).__init__(**kwargs)
+    
+    def func(self, s,p,o, training = False):
+        def circular_cross_correlation(x, y):
+            return tf.math.real(tf.signal.ifft(
+            tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
+        
+        x = circular_cross_correlation(s,o)
+        return self.activation(tf.reduce_sum(p*x,axis=-1))
 
 class ConvE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name=&#39;ConvE&#39;, 
                  hidden_dp=0.2,
-                 dp = 0.2,
-                 use_bn = True,
-                 hp=None, 
+                 conv_filters=8,
+                 conv_size_w=3, 
+                 conv_size_h=3,
                  **kwargs):
         &#34;&#34;&#34;ConvE implmentation.&#34;&#34;&#34;
-        super(ConvE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp
-                                       **kwargs)
-        self.dim = dim
+        self.activation = tf.sigmoid
+        super(ConvE, self).__init__(**kwargs)
+        
+        self.dim = kwargs[&#39;e_dim&#39;]
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
-        self.w, self.h = factors(dim).pop(-1)
+        self.w, self.h = factors(self.dim).pop(-1)
         
         self.hidden_dp = hidden_dp
     
-        if hp:
-            self.conv_filters = hp.Int(&#39;conv_filters&#39;,8,32,step=8,default=8)
-            self.conv_size_h = hp.Int(&#39;conv_size_h&#39;,2,5)
-            self.conv_size_w = hp.Int(&#39;conv_size_h&#39;,2,5)
-        else:
-            self.conv_filters = 8
-            self.conv_size_h = 3
-            self.conv_size_2 = 3
-            
+        self.conv_filters = conv_filters
+        self.conv_size_h = conv_size_h
+        self.conv_size_w = conv_size_w
+        
+        self.ls = [BatchNormalization(),
+                  Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
+                  Activation(&#39;relu&#39;),
+                  Dropout(self.hidden_dp),
+                  Flatten(),
+                  Dense(self.dim),
+                  Activation(&#39;relu&#39;),
+                  Dropout(self.hidden_dp)]
+        
     def func(self, s,p,o, training = False):
         s = Reshape((self.w,self.h))(s)
         p = Reshape((self.w,self.h))(p)
         x = Concatenate(axis=1)([s,p])
         x = K.expand_dims(x,axis=-1)
         
-        layers = [BatchNormalization(),
-                  Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
-                  Activation(&#39;relu&#39;),
-                  Dropout(self.hidden_dp),
-                  Activation(&#39;relu&#39;),
-                  Reshape((-1,)),
-                  Dense(self.dim)]
-        
-        for l in layers:
+        for l in self.ls:
             x = l(x)
         
-        return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))
+        return self.activation(tf.reduce_sum(x * o, axis=-1))
     
 class ConvR(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name=&#39;ConvR&#39;, 
-                 hidden_dp=0.2, 
-                 dp = 0.2,
-                 hp=None, 
+                 hidden_dp=0.2,
+                 conv_filters=8,
+                 conv_size_w=3, 
+                 conv_size_h=3,
                  **kwargs):
         &#34;&#34;&#34;ConvR implmentation.&#34;&#34;&#34;
-        super(ConvR, self).__init__(dim,
-                                       32*1*3*3,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       **kwargs)
-        self.dim = dim
+        kwargs[&#39;r_dim&#39;] = conv_filters*conv_size_w*conv_size_h
+        self.activation = tf.sigmoid
+        super(ConvR, self).__init__(**kwargs)
+        
+        self.dim = kwargs[&#39;e_dim&#39;]
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
-        self.w, self.h = factors(dim).pop(-1)
+        self.w, self.h = factors(self.dim).pop(-1)
        
         self.hidden_dp = hidden_dp
- 
+        self.conv_filters = conv_filters
+        self.conv_size_h = conv_size_h
+        self.conv_size_w = conv_size_w
+        
+        self.out = Dense(self.dim)
+            
     def func(self,s,p,o, training = False):
         
         x = Concatenate()([s,p])
         
         def forward(inputs):
             a,b = inputs[:self.dim], inputs[self.dim:]
-            b = tf.reshape(b,(3,3,1,32))
+            b = tf.reshape(b,(self.conv_size_w,self.conv_size_h,1,self.conv_filters))
             a = tf.reshape(a,(1,self.w,self.h,1))
             
             x = tf.nn.conv2d(a, b, strides=2, padding=&#39;SAME&#39;)
             x = tf.reshape(x,(-1,))
             x = Activation(&#39;relu&#39;)(x)
             
+            x = tf.expand_dims(x,axis=0)
+            x = self.out(x)
             x = Dropout(self.hidden_dp)(x)
             x = Activation(&#39;relu&#39;)(x)
-            x = tf.expand_dims(x,axis=0)
-            x = Dense(self.dim)(x)
             
             return x
-        
         
         x = tf.map_fn(forward, x)
         x = tf.squeeze(x,1)
         
-        return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))
+        return self.activation(tf.reduce_sum(x * o, axis=-1))
     
-    
+class ConvKB(EmbeddingModel):
+    def __init__(self,
+                 name=&#39;ConvKB&#39;, 
+                 hidden_dp=0.2,
+                 conv_filters=8,
+                 num_blocks = 1,
+                 **kwargs):
+        &#34;&#34;&#34;ConvKB implmentation.&#34;&#34;&#34;
+        self.activation = tf.sigmoid
+        super(ConvKB, self).__init__(**kwargs)
+        factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
+        
+        self.dim = kwargs[&#39;e_dim&#39;]
+        
+        self.w, self.h = factors(3*self.dim).pop(-1)
+        
+        block = [BatchNormalization(),
+                  Conv2D(conv_filters,(3,3),strides=(1,1)),
+                  Activation(&#39;relu&#39;),
+                  Dropout(hidden_dp)]
+        
+        self.ls = []
+        for _ in range(num_blocks):
+            self.ls.extend(block)
+        
+        self.ls.extend([Reshape((-1,)),
+                  Dense(self.dim),
+                  Activation(&#39;relu&#39;),
+                  Dropout(hidden_dp),
+                  Dense(1)])
+        
+    def func(self, s,p,o, training = False):
+        s = K.expand_dims(s,axis=-1)
+        p = K.expand_dims(p,axis=-1)
+        o = K.expand_dims(o,axis=-1)
+        x = Concatenate(axis=-1)([s,p,o])
+        x = K.expand_dims(x,axis=-1)
+        x = tf.reshape(x, (-1,self.h,self.w,1))
+        
+        for l in self.ls:
+            x = l(x)
+        
+        return self.activation(x)
 
 class HAKE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
+    def __init__(self,
                  epsilon=2, 
                  gamma = 12,  
                  phase_weight = 0.5,
                  mod_weight = 1,
                  norm = 2,
-                 use_bn=True, 
-                 dp = 0.2,
-                 loss_function=binary_crossentropy, 
                  name=&#39;HAKE&#39;,
-                 hp=None, 
                  **kwargs):
         &#34;&#34;&#34;HAKE implmentation.&#34;&#34;&#34;
-        super(HAKE, self).__init__(2*dim,
-                                       3*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       **kwargs)
+        kwargs[&#39;e_dim&#39;] = 2*kwargs[&#39;e_dim&#39;]
+        kwargs[&#39;r_dim&#39;] = 3*kwargs[&#39;r_dim&#39;]
+        super(HAKE, self).__init__(**kwargs)
         
         self.gamma = gamma
         self.epsilon = epsilon
@@ -413,7 +422,7 @@ class HAKE(EmbeddingModel):
         self.norm = norm
         
         self.pi = np.pi
-        self.embedding_range = (self.gamma + self.epsilon) / dim
+        self.embedding_range = (self.gamma + self.epsilon) / self.e_dim / 2
         
     def func(self, s,p,o, training = False):
         split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
@@ -433,30 +442,15 @@ class HAKE(EmbeddingModel):
         return self.gamma - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p)) + self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=self.norm,axis=-1))
         
 class ModE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 epsilon=2, 
+    def __init__(self,
                  gamma = 12, 
                  norm = 2,
-                 loss_function=binary_crossentropy, 
-                 use_bn = True,
-                 dp = 0.2,
                  name=&#39;ModE&#39;, 
-                 hp=None, 
                  **kwargs):
         &#34;&#34;&#34;ModE implmentation.&#34;&#34;&#34;
-        super(ModE, self).__init__(2*dim,
-                                       3*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       hp=hp,
-                                       **kwargs)
+        kwargs[&#39;e_dim&#39;] = 2*kwargs[&#39;e_dim&#39;]
+        kwargs[&#39;r_dim&#39;] = 3*kwargs[&#39;r_dim&#39;]
+        super(ModE, self).__init__(**kwargs)
         
         self.gamma = gamma
         self.norm = norm
@@ -465,81 +459,94 @@ class ModE(EmbeddingModel):
         return self.gamma - tf.norm(s * p - o, ord=self.norm, axis=-1)
     
     
-def DenseModel(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations,
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;Ensemble&#39;, 
-                 use_bn = True, 
-                 dp = 0.2, 
-                 hp = hp,
+class DenseModel(EmbeddingModel):
+    def __init__(self,
+                 name=&#39;Dense&#39;,
+                 hidden_units=[],
                  **kwargs):
         &#34;&#34;&#34;Dense model.&#34;&#34;&#34;
-        super(Hybrid, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       name=name,
-                                       hp = hp,
-                                       **kwargs)
-        
-        self.models = models
+        super(DenseModel, self).__init__(**kwargs)
+        self.ls = [Dense(i, activation=&#39;relu&#39;) for i in hidden_units]
+        self.output = Dense(1, activation=&#39;sigmoid&#39;)
     
     def func(self, s,p,o, training=False):
-        x = Concatenate(axis=-1)([s,p,o])
-        x = Dense(1, activation=&#39;sigmoid&#39;)
+        x = tf.concat([s,p,o],axis=-1)
+        for l in self.ls:
+            x = l(x)
+        x = self.output(x)
         return x
     
-class Ensemble(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 models, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;Ensemble&#39;, 
-                 use_bn = True, 
-                 dp = 0.2, 
+class Hybrid(EmbeddingModel):
+    def __init__(self,
+                 models = {},
+                 default_model = DistMult,
                  **kwargs):
-        &#34;&#34;&#34;Ensemble model. Outputs the ensemble mean.&#34;&#34;&#34;
-        super(Hybrid, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       name=name,
-                                       **kwargs)
+        &#34;&#34;&#34;Hybrid model. Outputs the ensemble mean.
         
+        Parameters
+        ---------
+        models : dict
+            {prop_id : model}
+        &#34;&#34;&#34;
+        super(Hybrid, self).__init__(**kwargs)
         self.models = models
+        
+        for k in range(kwargs[&#39;num_relations&#39;]):
+            if not k in self.models:
+                self.models[k] = default_model(**kwargs)
+        self.models = list([i for k,i in self.models.items()])
+        
+        self.ensemble_layer = Dense(1,use_bias=False,kernel_constraint=UnitNorm())
     
-    def call(self,inputs):
-        v = [m(inputs) for m in self.models]
+    def call(self, inputs, training=False):
         
-        return tf.reduce_mean(v)
+        &#34;&#34;&#34;
+        Parameters
+        ----------
+        inputs : tensor, shape = (batch_size, 3)
+        &#34;&#34;&#34;
+        
+        s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
+        
+        fs = tf.random.uniform((self.negative_samples,),
+                               minval=0, 
+                               maxval=self.num_entities, 
+                               dtype=tf.dtypes.int32)
+        fp = tf.random.uniform((self.negative_samples,), 
+                               minval=0, 
+                               maxval=self.num_relations,
+                               dtype=tf.dtypes.int32)
+        fo = tf.random.uniform((self.negative_samples,), 
+                               minval=0, 
+                               maxval=self.num_entities,
+                               dtype=tf.dtypes.int32)
+        
+        ints = p
+        f_ints = fp
+        
+        s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
+        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+        
+        s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
+        fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
+        
+        true_score = [tf.expand_dims(model.func(s,p,o),axis=-1) for model in self.models]
+        true_score = tf.gather(true_score, ints)
+        true_score = self.ensemble_layer(true_score)
         
         
+        false_score = [tf.expand_dims(model.func(fs,fp,fo),axis=-1) for model in self.models]
+        false_score = tf.gather(false_score, f_ints)
+        false_score = self.ensemble_layer(false_score)
         
+        true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
+        false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
         
+        loss = 0.5*(true_loss + false_loss)
         
+        self.add_loss(loss)
         
-        
-        
-        
-        
-        
-        
-    
-    
-    
-        
-        
+        return true_score
         </code></pre>
 </details>
 </section>
@@ -550,8 +557,8 @@ class Ensemble(EmbeddingModel):
 <section>
 <h2 class="section-title" id="header-functions">Functions</h2>
 <dl>
-<dt id="KGEkeras.models.DenseModel"><code class="name flex">
-<span>def <span class="ident">DenseModel</span></span>(<span>EmbeddingModel)</span>
+<dt id="KGEkeras.models.pairwize_hinge"><code class="name flex">
+<span>def <span class="ident">pairwize_hinge</span></span>(<span>true, false, margin=1)</span>
 </code></dt>
 <dd>
 <section class="desc"></section>
@@ -559,35 +566,73 @@ class Ensemble(EmbeddingModel):
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def DenseModel(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations,
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;Ensemble&#39;, 
-                 use_bn = True, 
-                 dp = 0.2, 
-                 hp = hp,
-                 **kwargs):
-        &#34;&#34;&#34;Dense model.&#34;&#34;&#34;
-        super(Hybrid, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       name=name,
-                                       hp = hp,
-                                       **kwargs)
-        
-        self.models = models
-    
-    def func(self, s,p,o, training=False):
-        x = Concatenate(axis=-1)([s,p,o])
-        x = Dense(1, activation=&#39;sigmoid&#39;)
-        return x</code></pre>
+<pre><code class="python">def pairwize_hinge(true,false,margin=1):
+    return tf.reduce_sum(tf.nn.relu(margin+false-true))</code></pre>
+</details>
+</dd>
+<dt id="KGEkeras.models.pairwize_logistic"><code class="name flex">
+<span>def <span class="ident">pairwize_logistic</span></span>(<span>true, false)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def pairwize_logistic(true,false):
+    return tf.reduce_sum(tf.math.log(1+tf.math.exp(false-true)))</code></pre>
+</details>
+</dd>
+<dt id="KGEkeras.models.pairwize_square_loss"><code class="name flex">
+<span>def <span class="ident">pairwize_square_loss</span></span>(<span>true, false)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def pairwize_square_loss(true,false):
+    return - tf.reduce_sum(tf.square(false-true))</code></pre>
+</details>
+</dd>
+<dt id="KGEkeras.models.pointwize_hinge"><code class="name flex">
+<span>def <span class="ident">pointwize_hinge</span></span>(<span>ytrue, ypred, margin=1)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def pointwize_hinge(ytrue,ypred,margin=1):
+    return tf.reduce_sum(tf.nn.relu(margin-ytrue*ypred))</code></pre>
+</details>
+</dd>
+<dt id="KGEkeras.models.pointwize_logistic"><code class="name flex">
+<span>def <span class="ident">pointwize_logistic</span></span>(<span>ytrue, ypred)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def pointwize_logistic(ytrue,ypred):
+    return tf.reduce_sum(tf.math.log(1+tf.math.exp(-ytrue*ypred)))</code></pre>
+</details>
+</dd>
+<dt id="KGEkeras.models.pointwize_square_loss"><code class="name flex">
+<span>def <span class="ident">pointwize_square_loss</span></span>(<span>ytrue, ypred)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def pointwize_square_loss(ytrue,ypred):
+    return 0.5 * tf.reduce_sum(tf.square(margin-ytrue*ypred))</code></pre>
 </details>
 </dd>
 </dl>
@@ -597,7 +642,7 @@ class Ensemble(EmbeddingModel):
 <dl>
 <dt id="KGEkeras.models.ComplEx"><code class="flex name class">
 <span>class <span class="ident">ComplEx</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='ComplEx', norm=1, use_bn=True, dp=0.2, hp=None, **kwargs)</span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -651,35 +696,25 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
 <p>ComplEx implmentation.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class ComplEx(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name=&#39;ComplEx&#39;, 
-                 norm=1, 
-                 use_bn = True, 
-                 dp = 0.2,
-                 hp=None, **kwargs):
+                 **kwargs):
         &#34;&#34;&#34;ComplEx implmentation.&#34;&#34;&#34;
-        super(ComplEx, self).__init__(2*dim,
-                                       2*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
-        
-        self.norm = norm
+        kwargs[&#39;e_dim&#39;] = 2*kwargs[&#39;e_dim&#39;]
+        kwargs[&#39;r_dim&#39;] = 2*kwargs[&#39;r_dim&#39;]
+        self.activation = tf.sigmoid
+        super(ComplEx, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
         split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
@@ -687,15 +722,15 @@ model = MyModel()
         p_real, p_img = split2(p)
         o_real, o_img = split2(o)
         
-        s1 = s_real*p_real*o_real 
+        s1 = s_real*p_real*o_real
         s2 = p_real*s_img*o_img
         s3 = p_img*s_real*o_img
         s4 = p_img*s_img*o_real
-        s1 = tf.norm(s1, axis=-1, ord=self.norm)
-        s2 = tf.norm(s2, axis=-1, ord=self.norm)
-        s3 = tf.norm(s3, axis=-1, ord=self.norm)
-        s4 = tf.norm(s4, axis=-1, ord=self.norm)
-        return tf.sigmoid(s1+s2+s3-s4)</code></pre>
+        s1 = tf.reduce_sum(s1, axis=-1)
+        s2 = tf.reduce_sum(s2, axis=-1)
+        s3 = tf.reduce_sum(s3, axis=-1)
+        s4 = tf.reduce_sum(s4, axis=-1)
+        return self.activation(s1+s2+s3-s4)</code></pre>
 </details>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -706,6 +741,8 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -724,15 +761,15 @@ model = MyModel()
     p_real, p_img = split2(p)
     o_real, o_img = split2(o)
     
-    s1 = s_real*p_real*o_real 
+    s1 = s_real*p_real*o_real
     s2 = p_real*s_img*o_img
     s3 = p_img*s_real*o_img
     s4 = p_img*s_img*o_real
-    s1 = tf.norm(s1, axis=-1, ord=self.norm)
-    s2 = tf.norm(s2, axis=-1, ord=self.norm)
-    s3 = tf.norm(s3, axis=-1, ord=self.norm)
-    s4 = tf.norm(s4, axis=-1, ord=self.norm)
-    return tf.sigmoid(s1+s2+s3-s4)</code></pre>
+    s1 = tf.reduce_sum(s1, axis=-1)
+    s2 = tf.reduce_sum(s2, axis=-1)
+    s3 = tf.reduce_sum(s3, axis=-1)
+    s4 = tf.reduce_sum(s4, axis=-1)
+    return self.activation(s1+s2+s3-s4)</code></pre>
 </details>
 </dd>
 </dl>
@@ -740,16 +777,14 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
 </dd>
 <dt id="KGEkeras.models.ConvE"><code class="flex name class">
 <span>class <span class="ident">ConvE</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='ConvE', hidden_dp=0.2, dp=0.2, use_bn=True, hp=None, **kwargs)</span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -803,67 +838,57 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
 <p>ConvE implmentation.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class ConvE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name=&#39;ConvE&#39;, 
                  hidden_dp=0.2,
-                 dp = 0.2,
-                 use_bn = True,
-                 hp=None, 
+                 conv_filters=8,
+                 conv_size_w=3, 
+                 conv_size_h=3,
                  **kwargs):
         &#34;&#34;&#34;ConvE implmentation.&#34;&#34;&#34;
-        super(ConvE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp
-                                       **kwargs)
-        self.dim = dim
+        self.activation = tf.sigmoid
+        super(ConvE, self).__init__(**kwargs)
+        
+        self.dim = kwargs[&#39;e_dim&#39;]
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
-        self.w, self.h = factors(dim).pop(-1)
+        self.w, self.h = factors(self.dim).pop(-1)
         
         self.hidden_dp = hidden_dp
     
-        if hp:
-            self.conv_filters = hp.Int(&#39;conv_filters&#39;,8,32,step=8,default=8)
-            self.conv_size_h = hp.Int(&#39;conv_size_h&#39;,2,5)
-            self.conv_size_w = hp.Int(&#39;conv_size_h&#39;,2,5)
-        else:
-            self.conv_filters = 8
-            self.conv_size_h = 3
-            self.conv_size_2 = 3
-            
+        self.conv_filters = conv_filters
+        self.conv_size_h = conv_size_h
+        self.conv_size_w = conv_size_w
+        
+        self.ls = [BatchNormalization(),
+                  Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
+                  Activation(&#39;relu&#39;),
+                  Dropout(self.hidden_dp),
+                  Flatten(),
+                  Dense(self.dim),
+                  Activation(&#39;relu&#39;),
+                  Dropout(self.hidden_dp)]
+        
     def func(self, s,p,o, training = False):
         s = Reshape((self.w,self.h))(s)
         p = Reshape((self.w,self.h))(p)
         x = Concatenate(axis=1)([s,p])
         x = K.expand_dims(x,axis=-1)
         
-        layers = [BatchNormalization(),
-                  Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
-                  Activation(&#39;relu&#39;),
-                  Dropout(self.hidden_dp),
-                  Activation(&#39;relu&#39;),
-                  Reshape((-1,)),
-                  Dense(self.dim)]
-        
-        for l in layers:
+        for l in self.ls:
             x = l(x)
         
-        return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))</code></pre>
+        return self.activation(tf.reduce_sum(x * o, axis=-1))</code></pre>
 </details>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -874,6 +899,8 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -892,18 +919,10 @@ model = MyModel()
     x = Concatenate(axis=1)([s,p])
     x = K.expand_dims(x,axis=-1)
     
-    layers = [BatchNormalization(),
-              Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
-              Activation(&#39;relu&#39;),
-              Dropout(self.hidden_dp),
-              Activation(&#39;relu&#39;),
-              Reshape((-1,)),
-              Dense(self.dim)]
-    
-    for l in layers:
+    for l in self.ls:
         x = l(x)
     
-    return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))</code></pre>
+    return self.activation(tf.reduce_sum(x * o, axis=-1))</code></pre>
 </details>
 </dd>
 </dl>
@@ -911,16 +930,14 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
 </dd>
-<dt id="KGEkeras.models.ConvR"><code class="flex name class">
-<span>class <span class="ident">ConvR</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='ConvR', hidden_dp=0.2, dp=0.2, hp=None, **kwargs)</span>
+<dt id="KGEkeras.models.ConvKB"><code class="flex name class">
+<span>class <span class="ident">ConvKB</span></span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -974,64 +991,59 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
-<p>ConvR implmentation.</p></section>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
+<p>ConvKB implmentation.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">class ConvR(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;ConvR&#39;, 
-                 hidden_dp=0.2, 
-                 dp = 0.2,
-                 hp=None, 
+<pre><code class="python">class ConvKB(EmbeddingModel):
+    def __init__(self,
+                 name=&#39;ConvKB&#39;, 
+                 hidden_dp=0.2,
+                 conv_filters=8,
+                 num_blocks = 1,
                  **kwargs):
-        &#34;&#34;&#34;ConvR implmentation.&#34;&#34;&#34;
-        super(ConvR, self).__init__(dim,
-                                       32*1*3*3,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       **kwargs)
-        self.dim = dim
+        &#34;&#34;&#34;ConvKB implmentation.&#34;&#34;&#34;
+        self.activation = tf.sigmoid
+        super(ConvKB, self).__init__(**kwargs)
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
-        self.w, self.h = factors(dim).pop(-1)
-       
-        self.hidden_dp = hidden_dp
- 
-    def func(self,s,p,o, training = False):
         
-        x = Concatenate()([s,p])
+        self.dim = kwargs[&#39;e_dim&#39;]
         
-        def forward(inputs):
-            a,b = inputs[:self.dim], inputs[self.dim:]
-            b = tf.reshape(b,(3,3,1,32))
-            a = tf.reshape(a,(1,self.w,self.h,1))
-            
-            x = tf.nn.conv2d(a, b, strides=2, padding=&#39;SAME&#39;)
-            x = tf.reshape(x,(-1,))
-            x = Activation(&#39;relu&#39;)(x)
-            
-            x = Dropout(self.hidden_dp)(x)
-            x = Activation(&#39;relu&#39;)(x)
-            x = tf.expand_dims(x,axis=0)
-            x = Dense(self.dim)(x)
-            
-            return x
+        self.w, self.h = factors(3*self.dim).pop(-1)
         
+        block = [BatchNormalization(),
+                  Conv2D(conv_filters,(3,3),strides=(1,1)),
+                  Activation(&#39;relu&#39;),
+                  Dropout(hidden_dp)]
         
-        x = tf.map_fn(forward, x)
-        x = tf.squeeze(x,1)
+        self.ls = []
+        for _ in range(num_blocks):
+            self.ls.extend(block)
         
-        return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))</code></pre>
+        self.ls.extend([Reshape((-1,)),
+                  Dense(self.dim),
+                  Activation(&#39;relu&#39;),
+                  Dropout(hidden_dp),
+                  Dense(1)])
+        
+    def func(self, s,p,o, training = False):
+        s = K.expand_dims(s,axis=-1)
+        p = K.expand_dims(p,axis=-1)
+        o = K.expand_dims(o,axis=-1)
+        x = Concatenate(axis=-1)([s,p,o])
+        x = K.expand_dims(x,axis=-1)
+        x = tf.reshape(x, (-1,self.h,self.w,1))
+        
+        for l in self.ls:
+            x = l(x)
+        
+        return self.activation(x)</code></pre>
 </details>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -1042,6 +1054,170 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.ConvKB.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training = False):
+    s = K.expand_dims(s,axis=-1)
+    p = K.expand_dims(p,axis=-1)
+    o = K.expand_dims(o,axis=-1)
+    x = Concatenate(axis=-1)([s,p,o])
+    x = K.expand_dims(x,axis=-1)
+    x = tf.reshape(x, (-1,self.h,self.w,1))
+    
+    for l in self.ls:
+        x = l(x)
+    
+    return self.activation(x)</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.ConvR"><code class="flex name class">
+<span>class <span class="ident">ConvR</span></span>
+<span>(</span><span>*args, **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
+<p>There are two ways to instantiate a <code>Model</code>:</p>
+<p>1 - With the "functional API", where you start from <code>Input</code>,
+you chain layer calls to specify the model's forward pass,
+and finally you create your model from inputs and outputs:</p>
+<pre><code class="python">import tensorflow as tf
+
+inputs = tf.keras.Input(shape=(3,))
+x = tf.keras.layers.Dense(4, activation=tf.nn.relu)(inputs)
+outputs = tf.keras.layers.Dense(5, activation=tf.nn.softmax)(x)
+model = tf.keras.Model(inputs=inputs, outputs=outputs)
+</code></pre>
+<p>2 - By subclassing the <code>Model</code> class: in that case, you should define your
+layers in <code>__init__</code> and you should implement the model's forward pass
+in <code>call</code>.</p>
+<pre><code class="python">import tensorflow as tf
+
+class MyModel(tf.keras.Model):
+
+  def __init__(self):
+    super(MyModel, self).__init__()
+    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
+    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
+
+  def call(self, inputs):
+    x = self.dense1(inputs)
+    return self.dense2(x)
+
+model = MyModel()
+</code></pre>
+<p>If you subclass <code>Model</code>, you can optionally have
+a <code>training</code> argument (boolean) in <code>call</code>, which you can use to specify
+a different behavior in training and inference:</p>
+<pre><code class="python">import tensorflow as tf
+
+class MyModel(tf.keras.Model):
+
+  def __init__(self):
+    super(MyModel, self).__init__()
+    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
+    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
+    self.dropout = tf.keras.layers.Dropout(0.5)
+
+  def call(self, inputs, training=False):
+    x = self.dense1(inputs)
+    if training:
+      x = self.dropout(x, training=training)
+    return self.dense2(x)
+
+model = MyModel()
+</code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
+<p>ConvR implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class ConvR(EmbeddingModel):
+    def __init__(self,
+                 name=&#39;ConvR&#39;, 
+                 hidden_dp=0.2,
+                 conv_filters=8,
+                 conv_size_w=3, 
+                 conv_size_h=3,
+                 **kwargs):
+        &#34;&#34;&#34;ConvR implmentation.&#34;&#34;&#34;
+        kwargs[&#39;r_dim&#39;] = conv_filters*conv_size_w*conv_size_h
+        self.activation = tf.sigmoid
+        super(ConvR, self).__init__(**kwargs)
+        
+        self.dim = kwargs[&#39;e_dim&#39;]
+        factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
+        self.w, self.h = factors(self.dim).pop(-1)
+       
+        self.hidden_dp = hidden_dp
+        self.conv_filters = conv_filters
+        self.conv_size_h = conv_size_h
+        self.conv_size_w = conv_size_w
+        
+        self.out = Dense(self.dim)
+            
+    def func(self,s,p,o, training = False):
+        
+        x = Concatenate()([s,p])
+        
+        def forward(inputs):
+            a,b = inputs[:self.dim], inputs[self.dim:]
+            b = tf.reshape(b,(self.conv_size_w,self.conv_size_h,1,self.conv_filters))
+            a = tf.reshape(a,(1,self.w,self.h,1))
+            
+            x = tf.nn.conv2d(a, b, strides=2, padding=&#39;SAME&#39;)
+            x = tf.reshape(x,(-1,))
+            x = Activation(&#39;relu&#39;)(x)
+            
+            x = tf.expand_dims(x,axis=0)
+            x = self.out(x)
+            x = Dropout(self.hidden_dp)(x)
+            x = Activation(&#39;relu&#39;)(x)
+            
+            return x
+        
+        x = tf.map_fn(forward, x)
+        x = tf.squeeze(x,1)
+        
+        return self.activation(tf.reduce_sum(x * o, axis=-1))</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>tensorflow.python.keras.engine.training.Model</li>
+<li>tensorflow.python.keras.engine.network.Network</li>
+<li>tensorflow.python.keras.engine.base_layer.Layer</li>
+<li>tensorflow.python.module.module.Module</li>
+<li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
+<li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -1060,25 +1236,24 @@ model = MyModel()
     
     def forward(inputs):
         a,b = inputs[:self.dim], inputs[self.dim:]
-        b = tf.reshape(b,(3,3,1,32))
+        b = tf.reshape(b,(self.conv_size_w,self.conv_size_h,1,self.conv_filters))
         a = tf.reshape(a,(1,self.w,self.h,1))
         
         x = tf.nn.conv2d(a, b, strides=2, padding=&#39;SAME&#39;)
         x = tf.reshape(x,(-1,))
         x = Activation(&#39;relu&#39;)(x)
         
+        x = tf.expand_dims(x,axis=0)
+        x = self.out(x)
         x = Dropout(self.hidden_dp)(x)
         x = Activation(&#39;relu&#39;)(x)
-        x = tf.expand_dims(x,axis=0)
-        x = Dense(self.dim)(x)
         
         return x
-    
     
     x = tf.map_fn(forward, x)
     x = tf.squeeze(x,1)
     
-    return tf.sigmoid(tf.reduce_sum(x * o, axis=-1))</code></pre>
+    return self.activation(tf.reduce_sum(x * o, axis=-1))</code></pre>
 </details>
 </dd>
 </dl>
@@ -1086,16 +1261,14 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
 </dd>
-<dt id="KGEkeras.models.DistMult"><code class="flex name class">
-<span>class <span class="ident">DistMult</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='DistMult', hp=None, use_bn=True, dp=0.2, **kwargs)</span>
+<dt id="KGEkeras.models.DenseModel"><code class="flex name class">
+<span>class <span class="ident">DenseModel</span></span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -1149,36 +1322,32 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
-<p>DistMult implmentation.</p></section>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
+<p>Dense model.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">class DistMult(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;DistMult&#39;, 
-                 hp=None, 
-                 use_bn = True, 
-                 dp = 0.2, 
+<pre><code class="python">class DenseModel(EmbeddingModel):
+    def __init__(self,
+                 name=&#39;Dense&#39;,
+                 hidden_units=[],
                  **kwargs):
-        &#34;&#34;&#34;DistMult implmentation.&#34;&#34;&#34;
-        super(DistMult, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        &#34;&#34;&#34;Dense model.&#34;&#34;&#34;
+        super(DenseModel, self).__init__(**kwargs)
+        self.ls = [Dense(i, activation=&#39;relu&#39;) for i in hidden_units]
+        self.output = Dense(1, activation=&#39;sigmoid&#39;)
     
-    def func(self, s,p,o, training = False):
-        return tf.sigmoid(tf.reduce_sum(s*p*o, axis=-1))</code></pre>
+    def func(self, s,p,o, training=False):
+        x = tf.concat([s,p,o],axis=-1)
+        for l in self.ls:
+            x = l(x)
+        x = self.output(x)
+        return x</code></pre>
 </details>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -1189,6 +1358,126 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="KGEkeras.models.DenseModel.func"><code class="name flex">
+<span>def <span class="ident">func</span></span>(<span>self, s, p, o, training=False)</span>
+</code></dt>
+<dd>
+<section class="desc"></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def func(self, s,p,o, training=False):
+    x = tf.concat([s,p,o],axis=-1)
+    for l in self.ls:
+        x = l(x)
+    x = self.output(x)
+    return x</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.DistMult"><code class="flex name class">
+<span>class <span class="ident">DistMult</span></span>
+<span>(</span><span>*args, **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
+<p>There are two ways to instantiate a <code>Model</code>:</p>
+<p>1 - With the "functional API", where you start from <code>Input</code>,
+you chain layer calls to specify the model's forward pass,
+and finally you create your model from inputs and outputs:</p>
+<pre><code class="python">import tensorflow as tf
+
+inputs = tf.keras.Input(shape=(3,))
+x = tf.keras.layers.Dense(4, activation=tf.nn.relu)(inputs)
+outputs = tf.keras.layers.Dense(5, activation=tf.nn.softmax)(x)
+model = tf.keras.Model(inputs=inputs, outputs=outputs)
+</code></pre>
+<p>2 - By subclassing the <code>Model</code> class: in that case, you should define your
+layers in <code>__init__</code> and you should implement the model's forward pass
+in <code>call</code>.</p>
+<pre><code class="python">import tensorflow as tf
+
+class MyModel(tf.keras.Model):
+
+  def __init__(self):
+    super(MyModel, self).__init__()
+    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
+    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
+
+  def call(self, inputs):
+    x = self.dense1(inputs)
+    return self.dense2(x)
+
+model = MyModel()
+</code></pre>
+<p>If you subclass <code>Model</code>, you can optionally have
+a <code>training</code> argument (boolean) in <code>call</code>, which you can use to specify
+a different behavior in training and inference:</p>
+<pre><code class="python">import tensorflow as tf
+
+class MyModel(tf.keras.Model):
+
+  def __init__(self):
+    super(MyModel, self).__init__()
+    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
+    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
+    self.dropout = tf.keras.layers.Dropout(0.5)
+
+  def call(self, inputs, training=False):
+    x = self.dense1(inputs)
+    if training:
+      x = self.dropout(x, training=training)
+    return self.dense2(x)
+
+model = MyModel()
+</code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
+<p>DistMult implmentation.</p></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class DistMult(EmbeddingModel):
+    def __init__(self,
+                 name=&#39;DistMult&#39;, 
+                 **kwargs):
+        &#34;&#34;&#34;DistMult implmentation.&#34;&#34;&#34;
+        self.activation = tf.sigmoid
+        super(DistMult, self).__init__(**kwargs)
+    
+    def func(self, s,p,o, training = False):
+        return self.activation(tf.reduce_sum(s*p*o, axis=-1))</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>tensorflow.python.keras.engine.training.Model</li>
+<li>tensorflow.python.keras.engine.network.Network</li>
+<li>tensorflow.python.keras.engine.base_layer.Layer</li>
+<li>tensorflow.python.module.module.Module</li>
+<li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
+<li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -1202,7 +1491,7 @@ model = MyModel()
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def func(self, s,p,o, training = False):
-    return tf.sigmoid(tf.reduce_sum(s*p*o, axis=-1))</code></pre>
+    return self.activation(tf.reduce_sum(s*p*o, axis=-1))</code></pre>
 </details>
 </dd>
 </dl>
@@ -1210,16 +1499,14 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
 </dd>
 <dt id="KGEkeras.models.EmbeddingModel"><code class="flex name class">
 <span>class <span class="ident">EmbeddingModel</span></span>
-<span>(</span><span>e_dim, r_dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='EmbeddingModel', use_bn=True, dp=0.2, hp=None, **kwargs)</span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -1273,6 +1560,11 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
 <p>Base class for embedding models. </p>
 <h2 id="parameters">Parameters</h2>
 <dl>
@@ -1286,8 +1578,10 @@ model = MyModel()
 <dd>&nbsp;</dd>
 <dt><strong><code>negative_samples</code></strong> :&ensp;<code>int</code></dt>
 <dd>Number of negative triples per BATCH.</dd>
-<dt><strong><code>loss_function</code></strong> :&ensp;<code>keras.losses.Loss</code></dt>
-<dd>&nbsp;</dd>
+<dt><strong><code>loss_function</code></strong> :&ensp;<code>string</code></dt>
+<dd>hinge, logistic, or square</dd>
+<dt><strong><code>loss_type</code></strong> :&ensp;<code>string</code></dt>
+<dd>pointwize or pairwize</dd>
 <dt><strong><code>use_bn</code></strong> :&ensp;<code>bool</code></dt>
 <dd>Batch norm.</dd>
 <dt><strong><code>use_dp</code></strong> :&ensp;<code>bool</code></dt>
@@ -1304,11 +1598,16 @@ model = MyModel()
                  num_entities, 
                  num_relations, 
                  negative_samples=2, 
-                 loss_function=binary_crossentropy,
+                 batch_size=16,
+                 loss_function=&#39;hinge&#39;,
+                 loss_type = &#39;pairwize&#39;,
                  name=&#39;EmbeddingModel&#39;,
                  use_bn = True, 
                  dp = 0.2,
-                 hp=None,
+                 margin = 1,
+                 loss_weight=1,
+                 entity_embedding_args = None,
+                 relational_embedding_args = None,
                  **kwargs):
         &#34;&#34;&#34;
         Base class for embedding models. 
@@ -1328,7 +1627,11 @@ model = MyModel()
         negative_samples : int 
             Number of negative triples per BATCH.
             
-        loss_function : keras.losses.Loss
+        loss_function : string
+            hinge, logistic, or square
+        
+        loss_type : string 
+            pointwize or pairwize
         
         use_bn : bool 
             Batch norm. 
@@ -1336,22 +1639,59 @@ model = MyModel()
         use_dp : bool 
             Use dropout.
         &#34;&#34;&#34;
-        super(EmbeddingModel, self).__init__(name=name,**kwargs)
+        super(EmbeddingModel, self).__init__(name=name)
         self.num_entities = num_entities
         self.num_relations = num_relations
-        self.entity_embedding = Embedding(num_entities, e_dim)
-        self.relational_embedding = Embedding(num_relations, r_dim)
+        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim,embeddings_initializer=glorot_normal())
+        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim,embeddings_initializer=glorot_normal())
+        self.dp = dp
         self.loss_function = loss_function
         self.negative_samples = negative_samples
+        self.batch_size = batch_size
+        self.e_dim = e_dim
+        self.r_dim = r_dim
+        self.margin = margin
+        self.loss_weight = loss_weight
         
-        self.dp = dp
-        self.use_bn = use_bn
+        if isinstance(self,TransE):
+            pos_label = -1
+            neg_label = 1
+            self.activation = tf.nn.relu
+        else:
+            pos_label = 1
+            neg_label = -1
         
-    def build(self, input_shape):
-        self.batch_size = input_shape[0]
+        if loss_type == &#39;pointwize&#39;:
+            
+            if self.loss_function == &#39;hinge&#39;:
+                lf = lambda x,y: pointwize_hinge(x,y,self.margin)
+            elif self.loss_function == &#39;logistic&#39;:
+                lf = pointwize_logistic
+            elif self.loss_function == &#39;square&#39;:
+                lf = pointwize_square_loss
+            else:
+                raise NotImplementedError(self.loss_function+&#39; is not implemented.&#39;)
+            
+            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)
+            
+        else:
+            if self.loss_function == &#39;hinge&#39;:
+                lf = lambda x,y: pairwize_hinge(x,y,self.margin)
+            elif self.loss_function == &#39;logistic&#39;:
+                lf = pairwize_logistic
+            elif self.loss_function == &#39;square&#39;:
+                lf = pairwize_square_loss
+            else:
+                raise NotImplementedError(self.loss_function+&#39; is not implemented.&#39;)
+            
+            def pairwize(x,y):
+                x = tf.repeat(x,self.negative_samples,0)
+                x = tf.reshape(x,(self.batch_size,self.negative_samples,1))
+                y = tf.reshape(y,(self.batch_size,self.negative_samples,1))
+                return lf(pos_label*x,neg_label*y)
+            self.lf = pairwize
         
-    def compute_output_shape(self,input_shape):
-        return (input_shape[0],1)
+        self.__dict__.update(kwargs)
     
     def call(self,inputs,training=False):
         &#34;&#34;&#34;
@@ -1360,36 +1700,36 @@ model = MyModel()
         inputs : tensor, shape = (batch_size, 3)
         &#34;&#34;&#34;
         s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
-        
-        fs = tf.random.uniform((self.negative_samples,),
-                               minval=0, 
-                               maxval=self.num_entities, 
-                               dtype=tf.dtypes.int32)
-        fp = tf.random.uniform((self.negative_samples,), 
-                               minval=0, 
-                               maxval=self.num_relations,
-                               dtype=tf.dtypes.int32)
-        fo = tf.random.uniform((self.negative_samples,), 
-                               minval=0, 
-                               maxval=self.num_entities,
-                               dtype=tf.dtypes.int32)
-        
+        fp = p
         s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
-        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
         
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
+        
+            #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
+        true_score = self.func(s,p,o,training)
+        true_score = K.expand_dims(true_score)
+            
+        fs = tf.random.uniform((self.negative_samples*self.batch_size,),
+                            minval=0, 
+                            maxval=self.num_entities, 
+                            dtype=tf.dtypes.int32)
+        
+        fp = tf.repeat(fp, self.negative_samples, 0)
+        
+        fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
+                            minval=0, 
+                            maxval=self.num_entities,
+                            dtype=tf.dtypes.int32)
+        
+        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
         fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
         
-        true_score = self.func(s,p,o,training)
-        false_score = self.func(fs,fp,fo,training)
+        #fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
         
-        true_score = K.expand_dims(true_score)
+        false_score = self.func(fs,fp,fo,training)
         false_score = K.expand_dims(false_score)
         
-        true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
-        false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
-        
-        loss = 0.5*(true_loss + false_loss)
+        loss = self.loss_weight*self.lf(true_score,false_score)
         
         self.add_loss(loss)
         
@@ -1403,61 +1743,25 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Subclasses</h3>
 <ul class="hlist">
 <li><a title="KGEkeras.models.ComplEx" href="#KGEkeras.models.ComplEx">ComplEx</a></li>
 <li><a title="KGEkeras.models.ConvE" href="#KGEkeras.models.ConvE">ConvE</a></li>
+<li><a title="KGEkeras.models.ConvKB" href="#KGEkeras.models.ConvKB">ConvKB</a></li>
 <li><a title="KGEkeras.models.ConvR" href="#KGEkeras.models.ConvR">ConvR</a></li>
+<li><a title="KGEkeras.models.DenseModel" href="#KGEkeras.models.DenseModel">DenseModel</a></li>
 <li><a title="KGEkeras.models.DistMult" href="#KGEkeras.models.DistMult">DistMult</a></li>
-<li><a title="KGEkeras.models.Ensemble" href="#KGEkeras.models.Ensemble">Ensemble</a></li>
 <li><a title="KGEkeras.models.HAKE" href="#KGEkeras.models.HAKE">HAKE</a></li>
 <li><a title="KGEkeras.models.HolE" href="#KGEkeras.models.HolE">HolE</a></li>
+<li><a title="KGEkeras.models.Hybrid" href="#KGEkeras.models.Hybrid">Hybrid</a></li>
 <li><a title="KGEkeras.models.ModE" href="#KGEkeras.models.ModE">ModE</a></li>
 <li><a title="KGEkeras.models.TransE" href="#KGEkeras.models.TransE">TransE</a></li>
 </ul>
 <h3>Methods</h3>
 <dl>
-<dt id="KGEkeras.models.EmbeddingModel.build"><code class="name flex">
-<span>def <span class="ident">build</span></span>(<span>self, input_shape)</span>
-</code></dt>
-<dd>
-<section class="desc"><p>Builds the model based on input shapes received.</p>
-<p>This is to be used for subclassed models, which do not know at instantiation
-time what their inputs look like.</p>
-<p>This method only exists for users who want to call <code>model.build()</code> in a
-standalone way (as a substitute for calling the model on real data to
-build it). It will never be called by the framework (and thus it will
-never throw unexpected errors in an unrelated workflow).</p>
-<p>Args:
-input_shape: Single tuple, TensorShape, or list of shapes, where shapes
-are tuples, integers, or TensorShapes.</p>
-<h2 id="raises">Raises</h2>
-<dl>
-<dt><code>ValueError</code>:</dt>
-<dd>&nbsp;</dd>
-</dl>
-<ol>
-<li>In case of invalid user-provided data (not of type tuple,
-list, or TensorShape).</li>
-<li>If the model requires call arguments that are agnostic
-to the input shapes (positional or kwarg in call signature).</li>
-<li>If not all layers were properly built.</li>
-<li>If float type inputs are not supported within the layers.</li>
-</ol>
-<dl>
-<dt><code>In</code> <code>each</code> of <code>these</code> <code>cases</code>, <code>the</code> <code>user</code> <code>should</code> <code>build</code> <code>their</code> <code>model</code> <code>by</code> <code>calling</code> <code>it</code></dt>
-<dd>&nbsp;</dd>
-</dl>
-<p>on real tensor data.</p></section>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def build(self, input_shape):
-    self.batch_size = input_shape[0]</code></pre>
-</details>
-</dd>
 <dt id="KGEkeras.models.EmbeddingModel.call"><code class="name flex">
 <span>def <span class="ident">call</span></span>(<span>self, inputs, training=False)</span>
 </code></dt>
@@ -1478,184 +1782,47 @@ to the input shapes (positional or kwarg in call signature).</li>
     inputs : tensor, shape = (batch_size, 3)
     &#34;&#34;&#34;
     s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
-    
-    fs = tf.random.uniform((self.negative_samples,),
-                           minval=0, 
-                           maxval=self.num_entities, 
-                           dtype=tf.dtypes.int32)
-    fp = tf.random.uniform((self.negative_samples,), 
-                           minval=0, 
-                           maxval=self.num_relations,
-                           dtype=tf.dtypes.int32)
-    fo = tf.random.uniform((self.negative_samples,), 
-                           minval=0, 
-                           maxval=self.num_entities,
-                           dtype=tf.dtypes.int32)
-    
+    fp = p
     s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
-    fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
     
     s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
+    
+        #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
+    true_score = self.func(s,p,o,training)
+    true_score = K.expand_dims(true_score)
+        
+    fs = tf.random.uniform((self.negative_samples*self.batch_size,),
+                        minval=0, 
+                        maxval=self.num_entities, 
+                        dtype=tf.dtypes.int32)
+    
+    fp = tf.repeat(fp, self.negative_samples, 0)
+    
+    fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
+                        minval=0, 
+                        maxval=self.num_entities,
+                        dtype=tf.dtypes.int32)
+    
+    fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
     fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
     
-    true_score = self.func(s,p,o,training)
-    false_score = self.func(fs,fp,fo,training)
+    #fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
     
-    true_score = K.expand_dims(true_score)
+    false_score = self.func(fs,fp,fo,training)
     false_score = K.expand_dims(false_score)
     
-    true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
-    false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
-    
-    loss = 0.5*(true_loss + false_loss)
+    loss = self.loss_weight*self.lf(true_score,false_score)
     
     self.add_loss(loss)
     
     return true_score</code></pre>
 </details>
 </dd>
-<dt id="KGEkeras.models.EmbeddingModel.compute_output_shape"><code class="name flex">
-<span>def <span class="ident">compute_output_shape</span></span>(<span>self, input_shape)</span>
-</code></dt>
-<dd>
-<section class="desc"><p>Computes the output shape of the layer.</p>
-<p>If the layer has not been built, this method will call <code>build</code> on the
-layer. This assumes that the layer will later be used with inputs that
-match the input shape provided here.</p>
-<h2 id="arguments">Arguments</h2>
-<dl>
-<dt><strong><code>input_shape</code></strong></dt>
-<dd>Shape tuple (tuple of integers)
-or list of shape tuples (one per output tensor of the layer).
-Shape tuples can include None for free dimensions,
-instead of an integer.</dd>
 </dl>
-<h2 id="returns">Returns</h2>
-<p>An input shape tuple.</p></section>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def compute_output_shape(self,input_shape):
-    return (input_shape[0],1)</code></pre>
-</details>
-</dd>
-</dl>
-</dd>
-<dt id="KGEkeras.models.Ensemble"><code class="flex name class">
-<span>class <span class="ident">Ensemble</span></span>
-<span>(</span><span>dim, num_entities, num_relations, models, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='Ensemble', use_bn=True, dp=0.2, **kwargs)</span>
-</code></dt>
-<dd>
-<section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
-<p>There are two ways to instantiate a <code>Model</code>:</p>
-<p>1 - With the "functional API", where you start from <code>Input</code>,
-you chain layer calls to specify the model's forward pass,
-and finally you create your model from inputs and outputs:</p>
-<pre><code class="python">import tensorflow as tf
-
-inputs = tf.keras.Input(shape=(3,))
-x = tf.keras.layers.Dense(4, activation=tf.nn.relu)(inputs)
-outputs = tf.keras.layers.Dense(5, activation=tf.nn.softmax)(x)
-model = tf.keras.Model(inputs=inputs, outputs=outputs)
-</code></pre>
-<p>2 - By subclassing the <code>Model</code> class: in that case, you should define your
-layers in <code>__init__</code> and you should implement the model's forward pass
-in <code>call</code>.</p>
-<pre><code class="python">import tensorflow as tf
-
-class MyModel(tf.keras.Model):
-
-  def __init__(self):
-    super(MyModel, self).__init__()
-    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
-    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
-
-  def call(self, inputs):
-    x = self.dense1(inputs)
-    return self.dense2(x)
-
-model = MyModel()
-</code></pre>
-<p>If you subclass <code>Model</code>, you can optionally have
-a <code>training</code> argument (boolean) in <code>call</code>, which you can use to specify
-a different behavior in training and inference:</p>
-<pre><code class="python">import tensorflow as tf
-
-class MyModel(tf.keras.Model):
-
-  def __init__(self):
-    super(MyModel, self).__init__()
-    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
-    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
-    self.dropout = tf.keras.layers.Dropout(0.5)
-
-  def call(self, inputs, training=False):
-    x = self.dense1(inputs)
-    if training:
-      x = self.dropout(x, training=training)
-    return self.dense2(x)
-
-model = MyModel()
-</code></pre>
-<p>Ensemble model. Outputs the ensemble mean.</p></section>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">class Ensemble(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 models, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;Ensemble&#39;, 
-                 use_bn = True, 
-                 dp = 0.2, 
-                 **kwargs):
-        &#34;&#34;&#34;Ensemble model. Outputs the ensemble mean.&#34;&#34;&#34;
-        super(Hybrid, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       name=name,
-                                       **kwargs)
-        
-        self.models = models
-    
-    def call(self,inputs):
-        v = [m(inputs) for m in self.models]
-        
-        return tf.reduce_mean(v)</code></pre>
-</details>
-<h3>Ancestors</h3>
-<ul class="hlist">
-<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
-<li>tensorflow.python.keras.engine.training.Model</li>
-<li>tensorflow.python.keras.engine.network.Network</li>
-<li>tensorflow.python.keras.engine.base_layer.Layer</li>
-<li>tensorflow.python.module.module.Module</li>
-<li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
-<li>tensorflow.python.training.tracking.base.Trackable</li>
-</ul>
-<h3>Inherited members</h3>
-<ul class="hlist">
-<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
-<ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
-</ul>
-</li>
-</ul>
 </dd>
 <dt id="KGEkeras.models.HAKE"><code class="flex name class">
 <span>class <span class="ident">HAKE</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma=12, phase_weight=0.5, mod_weight=1, norm=2, use_bn=True, dp=0.2, loss_function=&lt;function binary_crossentropy&gt;, name='HAKE', hp=None, **kwargs)</span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -1709,38 +1876,29 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
 <p>HAKE implmentation.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class HAKE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
+    def __init__(self,
                  epsilon=2, 
                  gamma = 12,  
                  phase_weight = 0.5,
                  mod_weight = 1,
                  norm = 2,
-                 use_bn=True, 
-                 dp = 0.2,
-                 loss_function=binary_crossentropy, 
                  name=&#39;HAKE&#39;,
-                 hp=None, 
                  **kwargs):
         &#34;&#34;&#34;HAKE implmentation.&#34;&#34;&#34;
-        super(HAKE, self).__init__(2*dim,
-                                       3*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       **kwargs)
+        kwargs[&#39;e_dim&#39;] = 2*kwargs[&#39;e_dim&#39;]
+        kwargs[&#39;r_dim&#39;] = 3*kwargs[&#39;r_dim&#39;]
+        super(HAKE, self).__init__(**kwargs)
         
         self.gamma = gamma
         self.epsilon = epsilon
@@ -1749,7 +1907,7 @@ model = MyModel()
         self.norm = norm
         
         self.pi = np.pi
-        self.embedding_range = (self.gamma + self.epsilon) / dim
+        self.embedding_range = (self.gamma + self.epsilon) / self.e_dim / 2
         
     def func(self, s,p,o, training = False):
         split2 = lambda x: tf.split(x,num_or_size_splits=2,axis=-1)
@@ -1777,6 +1935,8 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -1812,16 +1972,14 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
 </dd>
 <dt id="KGEkeras.models.HolE"><code class="flex name class">
 <span>class <span class="ident">HolE</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='HolE', hp=&lt;module &#x27;hyperopt.hp&#x27; from &#x27;/home/kire/miniconda3/lib/python3.7/site-packages/hyperopt/hp.py&#x27;&gt;, use_bn=True, dp=0.2, **kwargs)</span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -1875,40 +2033,31 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
 <p>HolE implmentation.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class HolE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
+    def __init__(self,
                  name=&#39;HolE&#39;, 
-                 hp=hp, 
-                 use_bn = True,
-                 dp = 0.2, 
                  **kwargs):
         &#34;&#34;&#34;HolE implmentation.&#34;&#34;&#34;
-        super(HolE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        self.activation = tf.sigmoid
+        super(HolE, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
         def circular_cross_correlation(x, y):
             return tf.math.real(tf.signal.ifft(
             tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
         
-        return tf.sigmoid(tf.reduce_sum(tf.multiply(p, circular_cross_correlation(s, o)), axis=-1))</code></pre>
+        x = circular_cross_correlation(s,o)
+        return self.activation(tf.reduce_sum(p*x,axis=-1))</code></pre>
 </details>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -1919,6 +2068,8 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -1936,7 +2087,8 @@ model = MyModel()
         return tf.math.real(tf.signal.ifft(
         tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
     
-    return tf.sigmoid(tf.reduce_sum(tf.multiply(p, circular_cross_correlation(s, o)), axis=-1))</code></pre>
+    x = circular_cross_correlation(s,o)
+    return self.activation(tf.reduce_sum(p*x,axis=-1))</code></pre>
 </details>
 </dd>
 </dl>
@@ -1944,16 +2096,14 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
 </dd>
-<dt id="KGEkeras.models.ModE"><code class="flex name class">
-<span>class <span class="ident">ModE</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, epsilon=2, gamma=12, norm=2, loss_function=&lt;function binary_crossentropy&gt;, use_bn=True, dp=0.2, name='ModE', hp=None, **kwargs)</span>
+<dt id="KGEkeras.models.Hybrid"><code class="flex name class">
+<span>class <span class="ident">Hybrid</span></span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -2007,36 +2157,190 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
+<p>Hybrid model. Outputs the ensemble mean.</p>
+<h2 id="parameters">Parameters</h2>
+<dl>
+<dt><strong><code>models</code></strong> :&ensp;<code>dict</code></dt>
+<dd>{prop_id : model}</dd>
+</dl></section>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class Hybrid(EmbeddingModel):
+    def __init__(self,
+                 models = {},
+                 default_model = DistMult,
+                 **kwargs):
+        &#34;&#34;&#34;Hybrid model. Outputs the ensemble mean.
+        
+        Parameters
+        ---------
+        models : dict
+            {prop_id : model}
+        &#34;&#34;&#34;
+        super(Hybrid, self).__init__(**kwargs)
+        self.models = models
+        
+        for k in range(kwargs[&#39;num_relations&#39;]):
+            if not k in self.models:
+                self.models[k] = default_model(**kwargs)
+        self.models = list([i for k,i in self.models.items()])
+        
+        self.ensemble_layer = Dense(1,use_bias=False,kernel_constraint=UnitNorm())
+    
+    def call(self, inputs, training=False):
+        
+        &#34;&#34;&#34;
+        Parameters
+        ----------
+        inputs : tensor, shape = (batch_size, 3)
+        &#34;&#34;&#34;
+        
+        s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
+        
+        fs = tf.random.uniform((self.negative_samples,),
+                               minval=0, 
+                               maxval=self.num_entities, 
+                               dtype=tf.dtypes.int32)
+        fp = tf.random.uniform((self.negative_samples,), 
+                               minval=0, 
+                               maxval=self.num_relations,
+                               dtype=tf.dtypes.int32)
+        fo = tf.random.uniform((self.negative_samples,), 
+                               minval=0, 
+                               maxval=self.num_entities,
+                               dtype=tf.dtypes.int32)
+        
+        ints = p
+        f_ints = fp
+        
+        s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
+        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+        
+        s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
+        fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
+        
+        true_score = [tf.expand_dims(model.func(s,p,o),axis=-1) for model in self.models]
+        true_score = tf.gather(true_score, ints)
+        true_score = self.ensemble_layer(true_score)
+        
+        
+        false_score = [tf.expand_dims(model.func(fs,fp,fo),axis=-1) for model in self.models]
+        false_score = tf.gather(false_score, f_ints)
+        false_score = self.ensemble_layer(false_score)
+        
+        true_loss = tf.reduce_mean(self.loss_function(tf.ones(tf.size(true_score)),true_score))
+        false_loss = tf.reduce_mean(self.loss_function(tf.zeros(tf.size(false_score)),false_score))
+        
+        loss = 0.5*(true_loss + false_loss)
+        
+        self.add_loss(loss)
+        
+        return true_score</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></li>
+<li>tensorflow.python.keras.engine.training.Model</li>
+<li>tensorflow.python.keras.engine.network.Network</li>
+<li>tensorflow.python.keras.engine.base_layer.Layer</li>
+<li>tensorflow.python.module.module.Module</li>
+<li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
+<li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
+</ul>
+<h3>Inherited members</h3>
+<ul class="hlist">
+<li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
+<ul class="hlist">
+<li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
+</ul>
+</li>
+</ul>
+</dd>
+<dt id="KGEkeras.models.ModE"><code class="flex name class">
+<span>class <span class="ident">ModE</span></span>
+<span>(</span><span>*args, **kwargs)</span>
+</code></dt>
+<dd>
+<section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
+<p>There are two ways to instantiate a <code>Model</code>:</p>
+<p>1 - With the "functional API", where you start from <code>Input</code>,
+you chain layer calls to specify the model's forward pass,
+and finally you create your model from inputs and outputs:</p>
+<pre><code class="python">import tensorflow as tf
+
+inputs = tf.keras.Input(shape=(3,))
+x = tf.keras.layers.Dense(4, activation=tf.nn.relu)(inputs)
+outputs = tf.keras.layers.Dense(5, activation=tf.nn.softmax)(x)
+model = tf.keras.Model(inputs=inputs, outputs=outputs)
+</code></pre>
+<p>2 - By subclassing the <code>Model</code> class: in that case, you should define your
+layers in <code>__init__</code> and you should implement the model's forward pass
+in <code>call</code>.</p>
+<pre><code class="python">import tensorflow as tf
+
+class MyModel(tf.keras.Model):
+
+  def __init__(self):
+    super(MyModel, self).__init__()
+    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
+    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
+
+  def call(self, inputs):
+    x = self.dense1(inputs)
+    return self.dense2(x)
+
+model = MyModel()
+</code></pre>
+<p>If you subclass <code>Model</code>, you can optionally have
+a <code>training</code> argument (boolean) in <code>call</code>, which you can use to specify
+a different behavior in training and inference:</p>
+<pre><code class="python">import tensorflow as tf
+
+class MyModel(tf.keras.Model):
+
+  def __init__(self):
+    super(MyModel, self).__init__()
+    self.dense1 = tf.keras.layers.Dense(4, activation=tf.nn.relu)
+    self.dense2 = tf.keras.layers.Dense(5, activation=tf.nn.softmax)
+    self.dropout = tf.keras.layers.Dropout(0.5)
+
+  def call(self, inputs, training=False):
+    x = self.dense1(inputs)
+    if training:
+      x = self.dropout(x, training=training)
+    return self.dense2(x)
+
+model = MyModel()
+</code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
 <p>ModE implmentation.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class ModE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 epsilon=2, 
+    def __init__(self,
                  gamma = 12, 
                  norm = 2,
-                 loss_function=binary_crossentropy, 
-                 use_bn = True,
-                 dp = 0.2,
                  name=&#39;ModE&#39;, 
-                 hp=None, 
                  **kwargs):
         &#34;&#34;&#34;ModE implmentation.&#34;&#34;&#34;
-        super(ModE, self).__init__(2*dim,
-                                       3*dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       use_bn = use_bn,
-                                       dp = dp,
-                                       hp=hp,
-                                       **kwargs)
+        kwargs[&#39;e_dim&#39;] = 2*kwargs[&#39;e_dim&#39;]
+        kwargs[&#39;r_dim&#39;] = 3*kwargs[&#39;r_dim&#39;]
+        super(ModE, self).__init__(**kwargs)
         
         self.gamma = gamma
         self.norm = norm
@@ -2053,6 +2357,8 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -2074,16 +2380,14 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
 </dd>
 <dt id="KGEkeras.models.TransE"><code class="flex name class">
 <span>class <span class="ident">TransE</span></span>
-<span>(</span><span>dim, num_entities, num_relations, negative_samples=2, loss_function=&lt;function binary_crossentropy&gt;, name='TransE', norm=2, gamma=1, hp=None, use_bn=True, dp=0.2, **kwargs)</span>
+<span>(</span><span>*args, **kwargs)</span>
 </code></dt>
 <dd>
 <section class="desc"><p><code>Model</code> groups layers into an object with training and inference features.</p>
@@ -2137,43 +2441,28 @@ class MyModel(tf.keras.Model):
 
 model = MyModel()
 </code></pre>
+<p>Once the model is created, you can config the model with losses and metrics
+with <code>model.compile()</code>, train the model with <code>model.fit()</code>, or use the model
+to do prediction with <code>model.predict()</code>.</p>
+<p>Checkout <a href="https://www.tensorflow.org/guide/keras/overview">guide</a> for
+additional details.</p>
 <p>TransE implmentation.</p></section>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class TransE(EmbeddingModel):
-    def __init__(self, dim, 
-                 num_entities, 
-                 num_relations, 
-                 negative_samples=2, 
-                 loss_function=binary_crossentropy, 
-                 name=&#39;TransE&#39;, 
-                 norm=2, 
-                 gamma=1, 
-                 hp=None, 
-                 use_bn = True, 
-                 dp = 0.2, 
+    def __init__(self, 
+                 name=&#39;TransE&#39;,
+                 norm=1,
                  **kwargs):
         &#34;&#34;&#34;TransE implmentation.&#34;&#34;&#34;
-        super(TransE, self).__init__(dim,
-                                       dim,
-                                       num_entities,
-                                       num_relations,
-                                       negative_samples,
-                                       name=name,
-                                       hp=hp,
-                                       use_bn = use_bn, 
-                                       dp = dp,
-                                       **kwargs)
+        super(TransE, self).__init__(name=name,**kwargs)
         
         self.norm = norm
-        self.loss_function = lambda y,yhat: tf.nn.relu(gamma + y*yhat + (y-1)*yhat)
-    
+        
     def func(self, s,p,o, training = False):
-        if training:
-            return tf.norm(s+p-o, axis=-1, ord=self.norm)
-        return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)</code></pre>
+        return tf.norm(s+p-o, axis=1, ord=self.norm)</code></pre>
 </details>
 <h3>Ancestors</h3>
 <ul class="hlist">
@@ -2184,6 +2473,8 @@ model = MyModel()
 <li>tensorflow.python.module.module.Module</li>
 <li>tensorflow.python.training.tracking.tracking.AutoTrackable</li>
 <li>tensorflow.python.training.tracking.base.Trackable</li>
+<li>tensorflow.python.keras.utils.version_utils.LayerVersionSelector</li>
+<li>tensorflow.python.keras.utils.version_utils.ModelVersionSelector</li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -2197,9 +2488,7 @@ model = MyModel()
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def func(self, s,p,o, training = False):
-    if training:
-        return tf.norm(s+p-o, axis=-1, ord=self.norm)
-    return 1 - tf.norm(s+p-o, axis=-1, ord=self.norm)</code></pre>
+    return tf.norm(s+p-o, axis=1, ord=self.norm)</code></pre>
 </details>
 </dd>
 </dl>
@@ -2207,9 +2496,7 @@ model = MyModel()
 <ul class="hlist">
 <li><code><b><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></b></code>:
 <ul class="hlist">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
 </li>
 </ul>
@@ -2230,7 +2517,12 @@ model = MyModel()
 </li>
 <li><h3><a href="#header-functions">Functions</a></h3>
 <ul class="">
-<li><code><a title="KGEkeras.models.DenseModel" href="#KGEkeras.models.DenseModel">DenseModel</a></code></li>
+<li><code><a title="KGEkeras.models.pairwize_hinge" href="#KGEkeras.models.pairwize_hinge">pairwize_hinge</a></code></li>
+<li><code><a title="KGEkeras.models.pairwize_logistic" href="#KGEkeras.models.pairwize_logistic">pairwize_logistic</a></code></li>
+<li><code><a title="KGEkeras.models.pairwize_square_loss" href="#KGEkeras.models.pairwize_square_loss">pairwize_square_loss</a></code></li>
+<li><code><a title="KGEkeras.models.pointwize_hinge" href="#KGEkeras.models.pointwize_hinge">pointwize_hinge</a></code></li>
+<li><code><a title="KGEkeras.models.pointwize_logistic" href="#KGEkeras.models.pointwize_logistic">pointwize_logistic</a></code></li>
+<li><code><a title="KGEkeras.models.pointwize_square_loss" href="#KGEkeras.models.pointwize_square_loss">pointwize_square_loss</a></code></li>
 </ul>
 </li>
 <li><h3><a href="#header-classes">Classes</a></h3>
@@ -2248,9 +2540,21 @@ model = MyModel()
 </ul>
 </li>
 <li>
+<h4><code><a title="KGEkeras.models.ConvKB" href="#KGEkeras.models.ConvKB">ConvKB</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.ConvKB.func" href="#KGEkeras.models.ConvKB.func">func</a></code></li>
+</ul>
+</li>
+<li>
 <h4><code><a title="KGEkeras.models.ConvR" href="#KGEkeras.models.ConvR">ConvR</a></code></h4>
 <ul class="">
 <li><code><a title="KGEkeras.models.ConvR.func" href="#KGEkeras.models.ConvR.func">func</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.DenseModel" href="#KGEkeras.models.DenseModel">DenseModel</a></code></h4>
+<ul class="">
+<li><code><a title="KGEkeras.models.DenseModel.func" href="#KGEkeras.models.DenseModel.func">func</a></code></li>
 </ul>
 </li>
 <li>
@@ -2262,13 +2566,8 @@ model = MyModel()
 <li>
 <h4><code><a title="KGEkeras.models.EmbeddingModel" href="#KGEkeras.models.EmbeddingModel">EmbeddingModel</a></code></h4>
 <ul class="">
-<li><code><a title="KGEkeras.models.EmbeddingModel.build" href="#KGEkeras.models.EmbeddingModel.build">build</a></code></li>
 <li><code><a title="KGEkeras.models.EmbeddingModel.call" href="#KGEkeras.models.EmbeddingModel.call">call</a></code></li>
-<li><code><a title="KGEkeras.models.EmbeddingModel.compute_output_shape" href="#KGEkeras.models.EmbeddingModel.compute_output_shape">compute_output_shape</a></code></li>
 </ul>
-</li>
-<li>
-<h4><code><a title="KGEkeras.models.Ensemble" href="#KGEkeras.models.Ensemble">Ensemble</a></code></h4>
 </li>
 <li>
 <h4><code><a title="KGEkeras.models.HAKE" href="#KGEkeras.models.HAKE">HAKE</a></code></h4>
@@ -2281,6 +2580,9 @@ model = MyModel()
 <ul class="">
 <li><code><a title="KGEkeras.models.HolE.func" href="#KGEkeras.models.HolE.func">func</a></code></li>
 </ul>
+</li>
+<li>
+<h4><code><a title="KGEkeras.models.Hybrid" href="#KGEkeras.models.Hybrid">Hybrid</a></code></h4>
 </li>
 <li>
 <h4><code><a title="KGEkeras.models.ModE" href="#KGEkeras.models.ModE">ModE</a></code></h4>
