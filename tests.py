@@ -3,7 +3,7 @@
 from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, DenseModel, Hybrid, ConvKB
 import numpy as np
 import tensorflow as tf
-from random import choice
+from random import choice, choices
 from collections import defaultdict
 
 from keras.layers import Input 
@@ -17,6 +17,15 @@ from kerastuner.tuners import RandomSearch, Hyperband, BayesianOptimization
 
 from KGEkeras.utils import load_kg, validate
 
+models = {'DistMult':DistMult,
+            'TransE':TransE,
+            'HolE':HolE,
+            #'HAKE':HAKE,
+            'ComplEx':ComplEx,
+            'ConvE':ConvE,
+            #'ConvR':ConvR
+         }
+
 class MyModel(tf.keras.Model):
     def __init__(self, embedding_model,name='my_model'):
         super(MyModel, self).__init__(name=name)
@@ -26,57 +35,81 @@ class MyModel(tf.keras.Model):
         return self.embedding_model(inputs)
 
 class MyHyperModel(HyperModel):
-    def __init__(self, N, M, bs, embedding_model=DistMult):
+    def __init__(self, N, M, bs):
         self.N = N
         self.M = M
         self.bs = bs
-        self.embedding_model = embedding_model
         
     def build(self, hp):
-        ns = self.bs*hp.Choice('negative_samples',[2,10,100])
+        embedding_model = models[hp.Choice('embedding_model',list(models.keys()))]
         dim = hp.Int('embedding_dim',50,200,step=50)
-        dm = self.embedding_model(e_dim=dim,
+        dm = embedding_model(e_dim=dim,
                                   r_dim=dim,
-                                  dp=hp.Float('dropout',0.0,0.5,step=0.1,default=0.2),
-                                  #hidden_dp=hp.Float('dropout',0.0,0.5,step=0.1,default=0.2),
-                                  #num_blocks=hp.Int('conv_blocks',1,4,default=1),
+                                  dp=0.2,
+                                  batch_size=self.bs,
                                   num_entities=self.N,
                                   num_relations=self.M,
-                                  loss_function=binary_crossentropy,
-                                  negative_samples=ns)
+                                  loss_function='hinge',
+                                  loss_type='pairwize',
+                                  negative_samples=10)
     
         model = MyModel(dm)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=hp.Choice('learning_rate',[1e-4,1e-3,1e-2]))
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
     
-        model.compile(optimizer=optimizer, loss=lambda y,yhat:0.0)
+        model.compile(optimizer=optimizer, loss=lambda x,y:0.0)
         
         return model
         
 class myCallBack(Callback):
-    def __init__(self, validation_data, train_data=None, *args, **kwargs):
+    def __init__(self, validation_data=[], train_data=[], test_data=[], bs=32, *args, **kwargs):
         super(myCallBack, self).__init__(*args, **kwargs)
+        self.test_data = test_data
         self.validation_data = validation_data
         self.train_data = train_data
+        self.bs = bs
         
     def on_epoch_end(self, epoch, logs = None):
-        if epoch >= 10 and epoch % 10 == 0:
+        if epoch % 10 == 0 and len(self.test_data) < 1:
             logs = logs or {}
+            d = choices(self.validation_data,k=self.bs)
             tmp = validate(self.model, 
-                            self.validation_data,
+                            d,
                             self.model.embedding_model.num_entities,
+                            self.bs,
                             self.train_data)
                 
             for k in tmp:
                 logs['val_'+k] = tmp[k]
                 
     def on_train_end(self, logs=None):
-        self.on_epoch_end(100,logs=logs)
-        
+        logs = logs or {}
+        if len(self.test_data) < 1:
+            tmp = validate(self.model, 
+                        self.validation_data,
+                        self.model.embedding_model.num_entities,
+                        self.bs,
+                        self.train_data)
+        else:
+            tmp = validate(self.model, 
+                        self.test_data,
+                        self.model.embedding_model.num_entities,
+                        self.bs,
+                        self.train_data)
+                
+        for k in tmp:
+            logs['val_'+k] = tmp[k]
+        print(logs)
+
+def pad(kg,bs):
+    while len(kg) % bs != 0:
+        kg.append(choice(kg))
+    return kg
+
 def main():
     
-    train = load_kg('./data/nations/train.txt')
-    valid = load_kg('./data/nations/valid.txt')
-    test = load_kg('./data/nations/test.txt')
+    train = load_kg('./data/FB15k-237/train.txt')
+    valid = load_kg('./data/FB15k-237/valid.txt')
+    test = load_kg('./data/FB15k-237/test.txt')
     
     E = set([a for a,b,c in train]) | set([c for a,b,c in train])
     E |= set([a for a,b,c in valid]) | set([c for a,b,c in valid])
@@ -93,32 +126,39 @@ def main():
     valid = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in valid]
     test = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in test]
     
-    bs = 16
-    hypermodel = MyHyperModel(len(E),len(R),bs,embedding_model=DistMult)
+    bs = 128
+    train = pad(train,bs)
+    valid = pad(valid,bs)
+    test = pad(test,bs)
+    
+    hypermodel = MyHyperModel(len(E),len(R),bs)
     
     tuner = RandomSearch(
         hypermodel,
         objective=kt.Objective("val_mrr", direction="max"),
         max_trials=10,
         seed=42,
+        overwrite=True,
         project_name=None)
     
     tuner.search(np.asarray(train),np.ones(len(train)),
              validation_data=(np.asarray(valid),np.ones(len(valid))),
-             epochs=12,
+             epochs=100,
              batch_size=bs,
-             callbacks = [myCallBack(np.asarray(valid),np.asarray(train)),
-                          EarlyStopping(monitor='loss',patience=2)])
+             verbose=2,
+             callbacks = [myCallBack(np.asarray(valid),np.asarray(train),bs=bs)
+                          ,EarlyStopping(monitor='loss',patience=2)])
              
     tuner.results_summary()
     
     best_model = tuner.get_best_models(1)[0]
     best_hyperparameters = tuner.get_best_hyperparameters(1)[0]
     
-    print(validate(best_model, 
-                   np.asarray(test),
-                   best_model.embedding_model.num_entities,
-                   np.asarray(train)))
-    
+    best_model.fit(np.asarray(train),np.ones(len(train)),
+             epochs=100,
+             batch_size=bs,
+             callbacks = [EarlyStopping(monitor='loss',patience=5),
+                          myCallBack(np.asarray(valid),np.asarray(train),np.asarray(test),bs=bs)])
+             
 if __name__ == '__main__':
     main()

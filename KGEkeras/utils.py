@@ -2,6 +2,7 @@
 import numpy as np
 from tqdm import tqdm
 from scipy.stats import rankdata
+from random import choice
 
 from tensorflow.keras.callbacks import Callback
 
@@ -13,10 +14,11 @@ def load_kg(path):
             out.append(l)
     return out
 
-def pad(l, bs):
-    num = bs - len(l) % bs
-    for _ in range(num):
-        l.append(choice(l))
+def pad(kg,bs):
+    kg = list(kg)
+    while len(kg) % bs != 0:
+        kg.append(choice(kg))
+    return np.asarray(kg)
         
 def mrr(target, scores):
     scores = sorted(scores, key=lambda x: x[1], reverse=True)
@@ -28,7 +30,7 @@ def hits(target, scores, k=10):
     labels = [x for x,_ in scores][:k]
     return int(target in labels)
         
-def validate(model, test_data, num_entities, filtering_triples = None):
+def validate(model, test_data, num_entities, bs, filtering_triples = None):
     c_1, c_3, c_10 = 0,0,0
     mean_ranks = []
     
@@ -47,7 +49,8 @@ def validate(model, test_data, num_entities, filtering_triples = None):
         objects = np.asarray([[int(o)]] + [[ent_id] for ent_id in candiate_objects])
         
         triples = np.concatenate((subjects,predicates,objects),axis=-1)
-        res = np.asarray(model.predict(triples)).reshape((-1,))
+        triples = pad(triples, bs)
+        res = np.asarray(model.predict(triples,batch_size=bs)).reshape((-1,))
         r = rankdata(res,'max')
         target_rank = r[0]
         num_candidate = len(res)
@@ -80,7 +83,8 @@ def validate(model, test_data, num_entities, filtering_triples = None):
         subjects = np.asarray([[int(s)]] + [[ent_id] for ent_id in candiate_subjects])
         
         triples = np.concatenate((subjects,predicates,objects),axis=-1)
-        res = np.asarray(model.predict(triples)).reshape((-1,))
+        triples = pad(triples, bs)
+        res = np.asarray(model.predict(triples,batch_size=bs)).reshape((-1,))
         r = rankdata(res,'max')
         target_rank = r[0]
         num_candidate = len(res)
