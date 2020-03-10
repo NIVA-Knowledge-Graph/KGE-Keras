@@ -117,7 +117,7 @@ class EmbeddingModel(tf.keras.Model):
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
-            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)
+            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)/self.negative_samples
             
         else:
             if self.loss_function == 'hinge':
