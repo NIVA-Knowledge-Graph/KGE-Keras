@@ -313,31 +313,24 @@ class ConvR(EmbeddingModel):
         self.conv_size_h = conv_size_h
         self.conv_size_w = conv_size_w
         
-        self.out = Dense(self.dim)
+        self.ls = [
+            Flatten(),
+            Activation('relu'),
+            Dense(self.dim),
+            Dropout(self.hidden_dp),
+            Activation('relu')
+            ]
             
     def func(self,s,p,o, training = False):
         
-        x = Concatenate()([s,p])
+        s = tf.reshape(s, (-1,1,self.w,self.h,1))
+        p = tf.reshape(p,(-1,self.conv_size_w,self.conv_size_h,1,self.conv_filters))
         
-        def forward(inputs):
-            a,b = inputs[:self.dim], inputs[self.dim:]
-            b = tf.reshape(b,(self.conv_size_w,self.conv_size_h,1,self.conv_filters))
-            a = tf.reshape(a,(1,self.w,self.h,1))
-            
-            x = tf.nn.conv2d(a, b, strides=2, padding='SAME')
-            x = tf.reshape(x,(-1,))
-            x = Activation('relu')(x)
-            
-            x = tf.expand_dims(x,axis=0)
-            x = self.out(x)
-            x = Dropout(self.hidden_dp)(x)
-            x = Activation('relu')(x)
-            
-            return x
+        x = tf.nn.conv3d(s, p, strides = [1,1,2,2,1], padding='SAME')
         
-        x = tf.map_fn(forward, x)
-        x = tf.squeeze(x,1)
-        
+        for l in self.ls:
+            x = l(x)
+     
         return self.activation(tf.reduce_sum(x * o, axis=-1))
     
 class ConvKB(EmbeddingModel):
