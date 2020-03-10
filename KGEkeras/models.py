@@ -32,6 +32,13 @@ def pairwize_square_loss(true,false):
 def pairwize_cross_entropy(true, false):
     return binary_crossentropy(1,true) + binary_crossentropy(0,false)
 
+def rank(res):
+    r = rankdata(res,'max')
+    target_rank = r[0]
+    num_candidate = len(res)
+    real_rank = num_candidate - target_rank + 1
+    return real_rank
+
 
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
@@ -152,7 +159,8 @@ class EmbeddingModel(tf.keras.Model):
         
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
         
-            #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
+        #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
+        
         true_score = self.func(s,p,o,training)
         true_score = K.expand_dims(true_score)
         
@@ -184,6 +192,7 @@ class EmbeddingModel(tf.keras.Model):
         self.add_loss(loss)
         
         return true_score
+        
 
 class DistMult(EmbeddingModel):
     def __init__(self,

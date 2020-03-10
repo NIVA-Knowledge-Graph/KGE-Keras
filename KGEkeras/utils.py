@@ -29,14 +29,10 @@ def hits(target, scores, k=10):
     scores = sorted(scores, key=lambda x: x[1], reverse=True)
     labels = [x for x,_ in scores][:k]
     return int(target in labels)
-        
-def validate(model, test_data, num_entities, bs, filtering_triples = None):
-    c_1, c_3, c_10 = 0,0,0
-    mean_ranks = []
+
+def gen_tail_data(test_data,num_entities,bs,filtering_triples):
     
-    np.random.shuffle(test_data)
-    
-    for s,p,o in tqdm(test_data,desc='TAIL'): #TAIL
+    for s,p,o in test_data:
         candiate_objects = list(range(num_entities))
         candiate_objects.remove(o)
         if filtering_triples is not None:
@@ -50,12 +46,43 @@ def validate(model, test_data, num_entities, bs, filtering_triples = None):
         
         triples = np.concatenate((subjects,predicates,objects),axis=-1)
         triples = pad(triples, bs)
-        res = np.asarray(model.predict(triples,batch_size=bs)).reshape((-1,))
+        
+        yield triples
+        
+def gen_head_data(test_data,num_entities,bs,filtering_triples):
+    
+    for s,p,o in test_data:
+        candiate_subjects = list(range(num_entities))
+        candiate_subjects.remove(s)
+    
+        if filtering_triples is not None:
+            for si,pi,oi in filtering_triples:
+                if oi == o and pi == pi and si in candiate_subjects: 
+                    candiate_subjects.remove(si)
+                    
+        objects = np.asarray([[int(o)]]*(len(candiate_subjects)+1))
+        predicates = np.asarray([[int(p)]]*(len(candiate_subjects)+1))
+        subjects = np.asarray([[int(s)]] + [[ent_id] for ent_id in candiate_subjects])
+        
+        triples = np.concatenate((subjects,predicates,objects),axis=-1)
+        triples = pad(triples, bs)
+        
+        yield triples
+        
+        
+def validate(model, test_data, num_entities, bs, filtering_triples = None):
+    c_1, c_3, c_10 = 0,0,0
+    mean_ranks = []
+    
+    gen = gen_tail_data(test_data,num_entities,bs,filtering_triples)
+    result = np.asarray(model.predict(gen,steps=len(test_data),verbose=1))
+    result = result.reshape((len(test_data),-1))
+  
+    for res in result:
         r = rankdata(res,'max')
         target_rank = r[0]
         num_candidate = len(res)
         real_rank = num_candidate - target_rank + 1
-        
         c_1 += 1 if target_rank == num_candidate else 0
         c_3 += 1 if target_rank + 3 > num_candidate else 0
         c_10 += 1 if target_rank + 10 > num_candidate else 0
@@ -69,27 +96,16 @@ def validate(model, test_data, num_entities, bs, filtering_triples = None):
     
     c_1, c_3, c_10 = 0,0,0
     mean_ranks = []
-    
-    for s,p,o in tqdm(test_data,desc='HEAD'): #HEAD
-        candiate_subjects = list(range(num_entities))
-        candiate_subjects.remove(s)
-        if filtering_triples is not None:
-            for si,pi,oi in filtering_triples:
-                if oi == o and pi == pi and si in candiate_subjects: 
-                    candiate_subjects.remove(si)
-                    
-        objects = np.asarray([[int(o)]]*(len(candiate_subjects)+1))
-        predicates = np.asarray([[int(p)]]*(len(candiate_subjects)+1))
-        subjects = np.asarray([[int(s)]] + [[ent_id] for ent_id in candiate_subjects])
         
-        triples = np.concatenate((subjects,predicates,objects),axis=-1)
-        triples = pad(triples, bs)
-        res = np.asarray(model.predict(triples,batch_size=bs)).reshape((-1,))
+    gen = gen_head_data(test_data,num_entities,bs,filtering_triples)
+    result = np.asarray(model.predict(gen,steps=len(test_data),verbose=1))
+    result = result.reshape((len(test_data),-1))
+    
+    for res in result:
         r = rankdata(res,'max')
         target_rank = r[0]
         num_candidate = len(res)
         real_rank = num_candidate - target_rank + 1
-        
         c_1 += 1 if target_rank == num_candidate else 0
         c_3 += 1 if target_rank + 3 > num_candidate else 0
         c_10 += 1 if target_rank + 10 > num_candidate else 0
@@ -119,7 +135,7 @@ def validate(model, test_data, num_entities, bs, filtering_triples = None):
                }
     
     return metrics
-        
+
         
 class KGEValidateCallback(Callback):
     def __init__(self, validation_data, train_data=None, *args, **kwargs):
