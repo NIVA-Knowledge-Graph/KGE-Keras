@@ -29,6 +29,10 @@ def pairwize_logistic(true,false):
 def pairwize_square_loss(true,false):
     return - tf.reduce_sum(tf.square(false-true))
 
+def pairwize_cross_entropy(true, false):
+    return binary_crossentropy(1,true) + binary_crossentropy(0,false)
+
+
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
                  e_dim, 
@@ -107,6 +111,9 @@ class EmbeddingModel(tf.keras.Model):
                 lf = pointwize_logistic
             elif self.loss_function == 'square':
                 lf = pointwize_square_loss
+            elif self.loss_function == 'cross entropy':
+                lf = binary_crossentropy
+                pos_label, neg_label = max(pos_label,0), max(neg_label,0)
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
@@ -119,6 +126,8 @@ class EmbeddingModel(tf.keras.Model):
                 lf = pairwize_logistic
             elif self.loss_function == 'square':
                 lf = pairwize_square_loss
+            elif self.loss_function == 'cross entropy':
+                lf = pairwize_cross_entropy
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
