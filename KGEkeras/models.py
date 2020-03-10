@@ -117,7 +117,7 @@ class EmbeddingModel(tf.keras.Model):
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
-            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)
+            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)/self.negative_samples
             
         else:
             if self.loss_function == 'hinge':
@@ -155,29 +155,32 @@ class EmbeddingModel(tf.keras.Model):
             #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
         true_score = self.func(s,p,o,training)
         true_score = K.expand_dims(true_score)
+        
+        if training:
+            fs = tf.random.uniform((self.negative_samples*self.batch_size,),
+                                minval=0, 
+                                maxval=self.num_entities, 
+                                dtype=tf.dtypes.int32)
+
+            fp = tf.repeat(fp, self.negative_samples, 0)
+
+            fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
+                                minval=0, 
+                                maxval=self.num_entities,
+                                dtype=tf.dtypes.int32)
+
+            fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+            fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
+
+            #fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
+
+            false_score = self.func(fs,fp,fo,training)
+            false_score = K.expand_dims(false_score)
+        
+            loss = self.loss_weight*self.lf(true_score,false_score)
+        else:
+            loss = 0.0
             
-        fs = tf.random.uniform((self.negative_samples*self.batch_size,),
-                            minval=0, 
-                            maxval=self.num_entities, 
-                            dtype=tf.dtypes.int32)
-        
-        fp = tf.repeat(fp, self.negative_samples, 0)
-        
-        fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
-                            minval=0, 
-                            maxval=self.num_entities,
-                            dtype=tf.dtypes.int32)
-        
-        fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
-        fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
-        
-        #fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
-        
-        false_score = self.func(fs,fp,fo,training)
-        false_score = K.expand_dims(false_score)
-        
-        loss = self.loss_weight*self.lf(true_score,false_score)
-        
         self.add_loss(loss)
         
         return true_score

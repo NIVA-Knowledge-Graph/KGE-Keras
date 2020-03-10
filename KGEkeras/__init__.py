@@ -4,3 +4,4 @@ __doc__ = """
     Knowledge graph embedding models implemented as keras.Model sub-classes.
 """
 from .models import *
+from .utils import *
