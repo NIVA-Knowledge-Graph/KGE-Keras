@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from scipy.stats import rankdata
 from random import choice
+from collections import defaultdict
 
 from tensorflow.keras.callbacks import Callback
 
@@ -30,51 +31,52 @@ def hits(target, scores, k=10):
     labels = [x for x,_ in scores][:k]
     return int(target in labels)
 
-def gen_tail_data(test_data,num_entities,bs,filtering_triples):
+def gen_tail_data(test_data,num_entities,bs,filter_t):
     
     for s,p,o in test_data:
         candiate_objects = list(range(num_entities))
         candiate_objects.remove(o)
-        if filtering_triples is not None:
-            for si,pi,oi in filtering_triples:
-                if si == s and pi == pi and oi in candiate_objects: 
-                    candiate_objects.remove(oi)
+        for oi in filter_t[(s,p)]:
+            candiate_objects.remove(oi)
                     
         subjects = np.asarray([[int(s)]]*(len(candiate_objects)+1))
         predicates = np.asarray([[int(p)]]*(len(candiate_objects)+1))
         objects = np.asarray([[int(o)]] + [[ent_id] for ent_id in candiate_objects])
         
         triples = np.concatenate((subjects,predicates,objects),axis=-1)
-        triples = pad(triples, bs)
         
         yield triples
         
-def gen_head_data(test_data,num_entities,bs,filtering_triples):
+def gen_head_data(test_data,num_entities,bs,filter_h):
     
     for s,p,o in test_data:
         candiate_subjects = list(range(num_entities))
         candiate_subjects.remove(s)
-    
-        if filtering_triples is not None:
-            for si,pi,oi in filtering_triples:
-                if oi == o and pi == pi and si in candiate_subjects: 
-                    candiate_subjects.remove(si)
+        
+        for si in filter_h[(p,o)]:
+            candiate_subjects.remove(si)
                     
         objects = np.asarray([[int(o)]]*(len(candiate_subjects)+1))
         predicates = np.asarray([[int(p)]]*(len(candiate_subjects)+1))
         subjects = np.asarray([[int(s)]] + [[ent_id] for ent_id in candiate_subjects])
         
         triples = np.concatenate((subjects,predicates,objects),axis=-1)
-        triples = pad(triples, bs)
         
         yield triples
         
         
 def validate(model, test_data, num_entities, bs, filtering_triples = None):
+    
+    filter_h = defaultdict(set)
+    filter_t = defaultdict(set)
+    for s,p,o in filtering_triples:
+        filter_h[(p,o)].add(s)
+        filter_t[(s,p)].add(o)
+    
     c_1, c_3, c_10 = 0,0,0
     mean_ranks = []
     
-    gen = gen_tail_data(test_data,num_entities,bs,filtering_triples)
+    gen = gen_tail_data(test_data,num_entities,bs,filter_t)
     result = np.asarray(model.predict(gen,steps=len(test_data),verbose=1))
     result = result.reshape((len(test_data),-1))
   
@@ -97,7 +99,7 @@ def validate(model, test_data, num_entities, bs, filtering_triples = None):
     c_1, c_3, c_10 = 0,0,0
     mean_ranks = []
         
-    gen = gen_head_data(test_data,num_entities,bs,filtering_triples)
+    gen = gen_head_data(test_data,num_entities,bs,filter_h)
     result = np.asarray(model.predict(gen,steps=len(test_data),verbose=1))
     result = result.reshape((len(test_data),-1))
     
