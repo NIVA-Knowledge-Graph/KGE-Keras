@@ -54,7 +54,7 @@ class MyHyperModel(HyperModel):
                                   num_relations=self.M,
                                   loss_function='hinge',
                                   loss_type='pairwize',
-                                  negative_samples=10)
+                                  negative_samples=100)
     
         model = MyModel(dm)
         optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
@@ -83,6 +83,9 @@ class myCallBack(Callback):
             for k in tmp:
                 logs['val_'+k] = tmp[k]
             print(logs)
+            
+    def on_train_end(self, epoch, logs=None):
+        self.on_epoch_end(100,logs)
 
 def pad(kg,bs):
     while len(kg) % bs != 0:
