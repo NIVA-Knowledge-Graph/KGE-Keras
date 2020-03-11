@@ -64,15 +64,14 @@ class MyHyperModel(HyperModel):
         return model
         
 class myCallBack(Callback):
-    def __init__(self, validation_data=[], train_data=[], test_data=[], bs=32, *args, **kwargs):
+    def __init__(self, validation_data=[], train_data=[], bs=32, *args, **kwargs):
         super(myCallBack, self).__init__(*args, **kwargs)
-        self.test_data = test_data
-        self.validation_data = validation_data
         self.train_data = train_data
+        self.validation_data = validation_data
         self.bs = bs
         
     def on_epoch_end(self, epoch, logs = None):
-        if epoch % 100 == 0:
+        if epoch % 100 == 0 and epoch > 0:
             logs = logs or {}
             
             tmp = validate(self.model, 
@@ -84,25 +83,6 @@ class myCallBack(Callback):
             for k in tmp:
                 logs['val_'+k] = tmp[k]
             print(logs)
-                
-    def on_train_end(self, logs=None):
-        logs = logs or {}
-        if len(self.test_data) < 1:
-            tmp = validate(self.model, 
-                        self.validation_data,
-                        self.model.embedding_model.num_entities,
-                        self.bs,
-                        self.train_data)
-        else:
-            tmp = validate(self.model, 
-                        self.test_data,
-                        self.model.embedding_model.num_entities,
-                        self.bs,
-                        self.train_data)
-                
-        for k in tmp:
-            logs['val_'+k] = tmp[k]
-        print(logs)
 
 def pad(kg,bs):
     while len(kg) % bs != 0:
@@ -140,17 +120,17 @@ def main():
     tuner = RandomSearch(
         hypermodel,
         objective=kt.Objective("val_mrr", direction="max"),
-        max_trials=10,
+        max_trials=1,
         seed=42,
         overwrite=True,
         project_name=None)
     
     tuner.search(np.asarray(train),np.ones(len(train)),
              validation_data=(np.asarray(valid),np.ones(len(valid))),
-             epochs=100,
+             epochs=1000,
              batch_size=bs,
              verbose=2,
-             callbacks = [myCallBack(np.asarray(valid),bs=bs)
+             callbacks = [myCallBack(np.asarray(valid),bs=bs,train_data=np.asarray(train))
                           ,EarlyStopping(monitor='loss',patience=2)])
              
     tuner.results_summary()
@@ -159,10 +139,17 @@ def main():
     best_hyperparameters = tuner.get_best_hyperparameters(1)[0]
     
     best_model.fit(np.asarray(train),np.ones(len(train)),
-             epochs=100,
+             epochs=1,
              batch_size=bs,
-             callbacks = [EarlyStopping(monitor='loss',patience=5),
-                          myCallBack(np.asarray(valid),np.asarray(train),np.asarray(test),bs=bs)])
+             callbacks = [EarlyStopping(monitor='loss',patience=5)])
+    
+    tmp = validate(best_model, 
+                   np.asarray(test),
+                   len(E),
+                   bs,
+                   np.asarray(train))
+    print(tmp)
+                          
              
 if __name__ == '__main__':
     main()
