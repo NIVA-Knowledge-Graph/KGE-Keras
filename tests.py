@@ -1,6 +1,6 @@
 ### tests.py
 
-from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, DenseModel, Hybrid, ConvKB
+from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, DenseModel, Hybrid, ConvKB, RotatE, pRotatE
 import numpy as np
 import tensorflow as tf
 from random import choice, choices
@@ -18,12 +18,14 @@ from kerastuner.tuners import RandomSearch, Hyperband, BayesianOptimization
 from KGEkeras.utils import load_kg, validate
 
 models = {'DistMult':DistMult,
-            'TransE':TransE,
-            'HolE':HolE,
-            #'HAKE':HAKE,
-            'ComplEx':ComplEx,
-            'ConvE':ConvE,
-            #'ConvR':ConvR
+           # 'TransE':TransE,
+           # 'HolE':HolE,
+           # 'ComplEx':ComplEx,
+           # 'ConvE':ConvE,
+            #'ConvR':ConvR,
+            #  'HAKE':HAKE,
+            #  'RotatE':RotatE,
+            #  'pRotatE':pRotatE
          }
 
 class MyModel(tf.keras.Model):
@@ -42,7 +44,8 @@ class MyHyperModel(HyperModel):
         
     def build(self, hp):
         embedding_model = models[hp.Choice('embedding_model',list(models.keys()))]
-        dim = hp.Int('embedding_dim',50,200,step=50)
+        #dim = hp.Int('embedding_dim',50,200,step=50)
+        dim = 256
         dm = embedding_model(e_dim=dim,
                                   r_dim=dim,
                                   dp=0.2,
@@ -69,17 +72,18 @@ class myCallBack(Callback):
         self.bs = bs
         
     def on_epoch_end(self, epoch, logs = None):
-        if epoch % 10 == 0 and len(self.test_data) < 1:
+        if epoch % 100 == 0:
             logs = logs or {}
-            d = choices(self.validation_data,k=self.bs)
+            
             tmp = validate(self.model, 
-                            d,
+                            self.validation_data,
                             self.model.embedding_model.num_entities,
                             self.bs,
                             self.train_data)
                 
             for k in tmp:
                 logs['val_'+k] = tmp[k]
+            print(logs)
                 
     def on_train_end(self, logs=None):
         logs = logs or {}
@@ -126,7 +130,7 @@ def main():
     valid = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in valid]
     test = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in test]
     
-    bs = 128
+    bs = 1024
     train = pad(train,bs)
     valid = pad(valid,bs)
     test = pad(test,bs)
@@ -146,7 +150,7 @@ def main():
              epochs=100,
              batch_size=bs,
              verbose=2,
-             callbacks = [myCallBack(np.asarray(valid),np.asarray(train),bs=bs)
+             callbacks = [myCallBack(np.asarray(valid),bs=bs)
                           ,EarlyStopping(monitor='loss',patience=2)])
              
     tuner.results_summary()

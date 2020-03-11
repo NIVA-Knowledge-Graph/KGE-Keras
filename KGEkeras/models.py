@@ -32,13 +32,8 @@ def pairwize_square_loss(true,false):
 def pairwize_cross_entropy(true, false):
     return binary_crossentropy(1,true) + binary_crossentropy(0,false)
 
-def rank(res):
-    r = rankdata(res,'max')
-    target_rank = r[0]
-    num_candidate = len(res)
-    real_rank = num_candidate - target_rank + 1
-    return real_rank
-
+def l3_reg(weight_matrix, w = 0.01):
+    return w * tf.norm(weight_matrix,ord=3)**3
 
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
@@ -55,6 +50,7 @@ class EmbeddingModel(tf.keras.Model):
                  dp = 0.2,
                  margin = 1,
                  loss_weight=1,
+                 regularization = 0.01,
                  entity_embedding_args = None,
                  relational_embedding_args = None,
                  **kwargs):
@@ -89,10 +85,15 @@ class EmbeddingModel(tf.keras.Model):
             Use dropout.
         """
         super(EmbeddingModel, self).__init__(name=name)
+        if regularization != 0.0:
+            reg = lambda x: l3_reg(x,regularization)
+        else:
+            reg = None
+        
         self.num_entities = num_entities
         self.num_relations = num_relations
-        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim,embeddings_initializer=glorot_normal())
-        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim,embeddings_initializer=glorot_normal())
+        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim,embeddings_initializer=glorot_normal(),embeddings_regularizer=reg)
+        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim,embeddings_initializer=glorot_normal(),embeddings_regularizer=reg)
         self.dp = dp
         self.loss_function = loss_function
         self.negative_samples = negative_samples
@@ -101,14 +102,10 @@ class EmbeddingModel(tf.keras.Model):
         self.r_dim = r_dim
         self.margin = margin
         self.loss_weight = loss_weight
-        
-        if isinstance(self,TransE):
-            pos_label = -1
-            neg_label = 1
-            self.activation = tf.nn.relu
-        else:
-            pos_label = 1
-            neg_label = -1
+        self.regularization = regularization
+       
+        self.pos_label = 1
+        self.neg_label = -1
         
         if loss_type == 'pointwize':
             
@@ -120,11 +117,11 @@ class EmbeddingModel(tf.keras.Model):
                 lf = pointwize_square_loss
             elif self.loss_function == 'cross entropy':
                 lf = binary_crossentropy
-                pos_label, neg_label = max(pos_label,0), max(neg_label,0)
+                self.pos_label, self.neg_label = max(self.pos_label,0), max(self.neg_label,0)
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
-            self.lf = lambda true,false: lf(pos_label,true) + lf(neg_label,false)/self.negative_samples
+            self.lf = lambda true,false: lf(self.pos_label,true) + lf(self.neg_label,false)/self.negative_samples
             
         else:
             if self.loss_function == 'hinge':
@@ -142,7 +139,7 @@ class EmbeddingModel(tf.keras.Model):
                 x = tf.repeat(x,self.negative_samples,0)
                 x = tf.reshape(x,(self.batch_size,self.negative_samples,1))
                 y = tf.reshape(y,(self.batch_size,self.negative_samples,1))
-                return lf(pos_label*x,neg_label*y)
+                return lf(self.pos_label*x,self.neg_label*y)
             self.lf = pairwize
         
         self.__dict__.update(kwargs)
@@ -159,10 +156,8 @@ class EmbeddingModel(tf.keras.Model):
         
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
         
-        #s,p,o = tf.nn.l2_normalize(s,-1),tf.nn.l2_normalize(p,-1),tf.nn.l2_normalize(o,-1)
-        
         true_score = self.func(s,p,o,training)
-        true_score = K.expand_dims(true_score)
+        true_score = tf.math.log_sigmoid(self.pos_label*K.expand_dims(true_score))
         
         if training:
             fs = tf.random.uniform((self.negative_samples*self.batch_size,),
@@ -180,16 +175,14 @@ class EmbeddingModel(tf.keras.Model):
             fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
             fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
 
-            #fs,fp,fo = tf.nn.l2_normalize(fs,-1),tf.nn.l2_normalize(fp,-1),tf.nn.l2_normalize(fo,-1)
-
             false_score = self.func(fs,fp,fo,training)
-            false_score = K.expand_dims(false_score)
+            false_score = tf.math.log_sigmoid(self.neg_label*K.expand_dims(false_score))
         
-            loss = self.loss_weight*self.lf(true_score,false_score)
+            loss = self.lf(true_score,false_score)
         else:
             loss = 0.0
-            
-        self.add_loss(loss)
+        
+        self.add_loss(self.loss_weight*loss)
         
         return true_score
         
@@ -199,25 +192,26 @@ class DistMult(EmbeddingModel):
                  name='DistMult', 
                  **kwargs):
         """DistMult implmentation."""
-        self.activation = tf.sigmoid
         super(DistMult, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
-        return self.activation(tf.reduce_sum(s*p*o, axis=-1))
+        return tf.reduce_sum(s*p*o, axis=-1)
         
 
 class TransE(EmbeddingModel):
     def __init__(self, 
                  name='TransE',
                  norm=1,
+                 gamma=12,
                  **kwargs):
         """TransE implmentation."""
         super(TransE, self).__init__(name=name,**kwargs)
         
+        self.gamma
         self.norm = norm
         
     def func(self, s,p,o, training = False):
-        return tf.norm(s+p-o, axis=1, ord=self.norm)
+        return self.gamma - tf.norm(s+p-o, axis=1, ord=self.norm)
 
 class ComplEx(EmbeddingModel):
     def __init__(self,
@@ -226,7 +220,6 @@ class ComplEx(EmbeddingModel):
         """ComplEx implmentation."""
         kwargs['e_dim'] = 2*kwargs['e_dim']
         kwargs['r_dim'] = 2*kwargs['r_dim']
-        self.activation = tf.sigmoid
         super(ComplEx, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
@@ -243,14 +236,13 @@ class ComplEx(EmbeddingModel):
         s2 = tf.reduce_sum(s2, axis=-1)
         s3 = tf.reduce_sum(s3, axis=-1)
         s4 = tf.reduce_sum(s4, axis=-1)
-        return self.activation(s1+s2+s3-s4)
+        return s1+s2+s3-s4
 
 class HolE(EmbeddingModel):
     def __init__(self,
                  name='HolE', 
                  **kwargs):
         """HolE implmentation."""
-        self.activation = tf.sigmoid
         super(HolE, self).__init__(**kwargs)
     
     def func(self, s,p,o, training = False):
@@ -259,7 +251,7 @@ class HolE(EmbeddingModel):
             tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
         
         x = circular_cross_correlation(s,o)
-        return self.activation(tf.reduce_sum(p*x,axis=-1))
+        return tf.reduce_sum(p*x,axis=-1)
 
 class ConvE(EmbeddingModel):
     def __init__(self,
@@ -270,7 +262,6 @@ class ConvE(EmbeddingModel):
                  conv_size_h=3,
                  **kwargs):
         """ConvE implmentation."""
-        self.activation = tf.sigmoid
         super(ConvE, self).__init__(**kwargs)
         
         self.dim = kwargs['e_dim']
@@ -301,7 +292,7 @@ class ConvE(EmbeddingModel):
         for l in self.ls:
             x = l(x)
         
-        return self.activation(tf.reduce_sum(x * o, axis=-1))
+        return tf.reduce_sum(x * o, axis=-1)
     
 class ConvR(EmbeddingModel):
     def __init__(self,
@@ -313,7 +304,6 @@ class ConvR(EmbeddingModel):
                  **kwargs):
         """ConvR implmentation."""
         kwargs['r_dim'] = conv_filters*conv_size_w*conv_size_h
-        self.activation = tf.sigmoid
         super(ConvR, self).__init__(**kwargs)
         
         self.dim = kwargs['e_dim']
@@ -343,7 +333,7 @@ class ConvR(EmbeddingModel):
         for l in self.ls:
             x = l(x)
      
-        return self.activation(tf.reduce_sum(x * o, axis=-1))
+        return tf.reduce_sum(x * o, axis=-1)
     
 class ConvKB(EmbeddingModel):
     def __init__(self,
@@ -353,7 +343,6 @@ class ConvKB(EmbeddingModel):
                  num_blocks = 1,
                  **kwargs):
         """ConvKB implmentation."""
-        self.activation = tf.sigmoid
         super(ConvKB, self).__init__(**kwargs)
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
         
@@ -387,7 +376,7 @@ class ConvKB(EmbeddingModel):
         for l in self.ls:
             x = l(x)
         
-        return self.activation(x)
+        return x
 
 class HAKE(EmbeddingModel):
     def __init__(self,
@@ -446,16 +435,81 @@ class ModE(EmbeddingModel):
     def func(self, s,p,o, training = False):
         return self.gamma - tf.norm(s * p - o, ord=self.norm, axis=-1)
     
+class RotatE(EmbeddingModel):
+    def __init__(self,
+                 gamma=12,
+                 norm=2,
+                 epsilon=2,
+                 name='RotatE',
+                 **kwargs):
+        kwargs['e_dim'] = 2*kwargs['e_dim']
+        kwargs['r_dim'] = kwargs['r_dim']
+        super(RotatE, self).__init__(**kwargs)
+        
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.norm = norm
+        
+        self.pi = np.pi
+        self.embedding_range = (self.gamma + self.epsilon) / self.e_dim / 2
     
+    def func(self, s,p,o, training=False):
+        re_s, im_s = tf.split(s,num_or_size_splits=2,axis=-1)
+        re_o, im_o = tf.split(o,num_or_size_splits=2,axis=-1)
+        
+        phase_r = p/(self.embedding_range/self.pi)
+        re_r = tf.math.cos(phase_r)
+        im_r = tf.math.sin(phase_r)
+        
+        re_score = re_s * re_r - im_s * im_r
+        im_score = re_s * im_r + im_s * re_r
+        re_score = re_score - re_o
+        im_score = im_score - im_o
+        
+        score = tf.concat([re_score, im_score], axis = 1)
+        score = tf.norm(score, axis = 1, ord=self.norm)
+        
+        return self.gamma - score
+    
+class pRotatE(EmbeddingModel):
+    def __init__(self,
+                 gamma=12,
+                 norm=2,
+                 epsilon=2,
+                 modulus=0.5,
+                 name='pRotatE',
+                 **kwargs):
+        kwargs['e_dim'] = 2*kwargs['e_dim']
+        kwargs['r_dim'] = 2*kwargs['r_dim']
+        super(pRotatE, self).__init__(**kwargs)
+        
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.norm = norm
+        
+        self.pi = np.pi
+        self.embedding_range = (self.gamma + self.epsilon) / self.e_dim / 2
+        self.modulus = modulus*self.embedding_range
+    
+    def func(self, s,p,o, training=False):
+        
+        phase_r = p/(self.embedding_range/self.pi)
+        phase_s = s/(self.embedding_range/self.pi)
+        phase_o = o/(self.embedding_range/self.pi)
+        
+        score = tf.abs(tf.math.sin(phase_s + phase_r - phase_o))
+        
+        return self.gamma - tf.reduce_sum(score,axis=1)*self.modulus
+
 class DenseModel(EmbeddingModel):
     def __init__(self,
                  name='Dense',
-                 hidden_units=[],
+                 hidden_units=[32],
                  **kwargs):
         """Dense model."""
         super(DenseModel, self).__init__(**kwargs)
         self.ls = [Dense(i, activation='relu') for i in hidden_units]
-        self.output = Dense(1, activation='sigmoid')
+        self.output = Dense(1)
     
     def func(self, s,p,o, training=False):
         x = tf.concat([s,p,o],axis=-1)
