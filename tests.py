@@ -45,7 +45,7 @@ class MyHyperModel(HyperModel):
     def build(self, hp):
         embedding_model = models[hp.Choice('embedding_model',list(models.keys()))]
         #dim = hp.Int('embedding_dim',50,200,step=50)
-        dim = 256
+        dim = 128
         dm = embedding_model(e_dim=dim,
                                   r_dim=dim,
                                   dp=0.2,
@@ -71,7 +71,7 @@ class myCallBack(Callback):
         self.bs = bs
         
     def on_epoch_end(self, epoch, logs = None):
-        if epoch % 100 == 0 and epoch > 0:
+        if epoch % 10 == 0 and epoch >= 100:
             logs = logs or {}
             
             tmp = validate(self.model, 
@@ -83,9 +83,6 @@ class myCallBack(Callback):
             for k in tmp:
                 logs['val_'+k] = tmp[k]
             print(logs)
-            
-    def on_train_end(self, epoch, logs=None):
-        self.on_epoch_end(100,logs)
 
 def pad(kg,bs):
     while len(kg) % bs != 0:
@@ -113,10 +110,8 @@ def main():
     valid = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in valid]
     test = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in test]
     
-    bs = 1024
+    bs = 2048
     train = pad(train,bs)
-    valid = pad(valid,bs)
-    test = pad(test,bs)
     
     hypermodel = MyHyperModel(len(E),len(R),bs)
     
@@ -134,7 +129,7 @@ def main():
              batch_size=bs,
              verbose=2,
              callbacks = [myCallBack(np.asarray(valid),bs=bs,train_data=np.asarray(train))
-                          ,EarlyStopping(monitor='loss',patience=2)])
+                          ,EarlyStopping(monitor='val_mrr', patience=1)])
              
     tuner.results_summary()
     
@@ -143,8 +138,7 @@ def main():
     
     best_model.fit(np.asarray(train),np.ones(len(train)),
              epochs=1,
-             batch_size=bs,
-             callbacks = [EarlyStopping(monitor='loss',patience=5)])
+             batch_size=bs)
     
     tmp = validate(best_model, 
                    np.asarray(test),

@@ -45,7 +45,7 @@ def gen_tail_data(test_data,num_entities,bs,filter_t):
         
         triples = np.concatenate((subjects,predicates,objects),axis=-1)
         
-        yield triples
+        yield triples.reshape((-1,3))
         
 def gen_head_data(test_data,num_entities,bs,filter_h):
     
@@ -62,7 +62,7 @@ def gen_head_data(test_data,num_entities,bs,filter_h):
         
         triples = np.concatenate((subjects,predicates,objects),axis=-1)
         
-        yield triples
+        yield triples.reshape((-1,3))
         
         
 def validate(model, test_data, num_entities, bs, filtering_triples = None):
@@ -75,12 +75,9 @@ def validate(model, test_data, num_entities, bs, filtering_triples = None):
     
     c_1, c_3, c_10 = 0,0,0
     mean_ranks = []
-    
-    gen = gen_tail_data(test_data,num_entities,bs,filter_t)
-    result = np.asarray(model.predict(gen,steps=len(test_data),verbose=1))
-    result = result.reshape((len(test_data),-1))
-  
-    for res in result:
+
+    for t in tqdm(gen_tail_data(test_data,num_entities,bs,filter_t),total=len(test_data)):
+        res = np.asarray(model.predict(t)).reshape((-1,))
         r = rankdata(res,'max')
         target_rank = r[0]
         num_candidate = len(res)
@@ -98,12 +95,9 @@ def validate(model, test_data, num_entities, bs, filtering_triples = None):
     
     c_1, c_3, c_10 = 0,0,0
     mean_ranks = []
-        
-    gen = gen_head_data(test_data,num_entities,bs,filter_h)
-    result = np.asarray(model.predict(gen,steps=len(test_data),verbose=1))
-    result = result.reshape((len(test_data),-1))
     
-    for res in result:
+    for t in tqdm(gen_head_data(test_data,num_entities,bs,filter_h),total=len(test_data)):
+        res = np.asarray(model.predict(t)).reshape((-1,))
         r = rankdata(res,'max')
         target_rank = r[0]
         num_candidate = len(res)
