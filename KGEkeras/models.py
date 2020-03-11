@@ -121,7 +121,7 @@ class EmbeddingModel(tf.keras.Model):
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
-            self.lf = lambda true,false: lf(self.pos_label,true) + lf(self.neg_label,false)/self.negative_samples
+            self.lf = lambda true,false: (lf(self.pos_label,true) + lf(self.neg_label,false)/self.negative_samples)/2*self.batch_size
             
         else:
             if self.loss_function == 'hinge':
@@ -139,7 +139,8 @@ class EmbeddingModel(tf.keras.Model):
                 x = tf.repeat(x,self.negative_samples,0)
                 x = tf.reshape(x,(self.batch_size,self.negative_samples,1))
                 y = tf.reshape(y,(self.batch_size,self.negative_samples,1))
-                return lf(self.pos_label*x,self.neg_label*y)
+                return lf(self.pos_label*x,self.neg_label*y)/(self.batch_size*self.negative_samples)
+            
             self.lf = pairwize
         
         self.__dict__.update(kwargs)
