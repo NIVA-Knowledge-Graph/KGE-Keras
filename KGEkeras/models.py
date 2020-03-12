@@ -207,7 +207,7 @@ class TransE(EmbeddingModel):
         """TransE implmentation."""
         super(TransE, self).__init__(name=name,**kwargs)
         
-        self.gamma
+        self.gamma = gamma
         self.norm = norm
         
     def func(self, s,p,o, training = False):
