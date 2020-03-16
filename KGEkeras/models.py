@@ -108,6 +108,8 @@ class EmbeddingModel(tf.keras.Model):
         
         if loss_type == 'pointwize':
             
+            self.pos_label, self.neg_label = max(self.pos_label,0), max(self.neg_label,0)
+            
             if self.loss_function == 'hinge':
                 lf = lambda x,y: pointwize_hinge(x,y,self.margin)
             elif self.loss_function == 'logistic':
@@ -116,7 +118,6 @@ class EmbeddingModel(tf.keras.Model):
                 lf = pointwize_square_loss
             elif self.loss_function == 'cross entropy':
                 lf = binary_crossentropy
-                self.pos_label, self.neg_label = max(self.pos_label,0), max(self.neg_label,0)
             else:
                 raise NotImplementedError(self.loss_function+' is not implemented.')
             
