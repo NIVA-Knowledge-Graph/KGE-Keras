@@ -86,12 +86,16 @@ class EmbeddingModel(tf.keras.Model):
         """
         super(EmbeddingModel, self).__init__(name=name)
         self.regularization = regularization
+        if regularization != 0.0:
+            reg = lambda x: l3_reg(x,regularization)
+        else:
+            reg = None
         
         self.num_entities = num_entities
         self.num_relations = num_relations
         
-        self.entity_embedding = tf.Variable(tf.random.uniform([num_entities,e_dim]),trainable=True)
-        self.relational_embedding = tf.Variable(tf.random.uniform([num_relations,r_dim]),trainable=True)
+        self.entity_embedding = Embedding(num_entities,e_dim,embeddings_regularizer=reg)
+        self.relational_embedding = Embedding(num_relations,r_dim,embeddings_regularizer=reg)
         
         self.dp = dp
         self.loss_function = loss_function
@@ -154,7 +158,7 @@ class EmbeddingModel(tf.keras.Model):
         
         s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
         fp = p
-        s,p,o = tf.nn.embedding_lookup(self.entity_embedding,s),tf.nn.embedding_lookup(self.relational_embedding,p),tf.nn.embedding_lookup(self.entity_embedding,o)
+        s,p,o = self.entity_embedding(s),self.relational_embedding(p),self.entity_embedding(o)
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
         
         true_score = self.func(s,p,o,training)
@@ -173,13 +177,13 @@ class EmbeddingModel(tf.keras.Model):
                                 maxval=self.num_entities,
                                 dtype=tf.dtypes.int32)
 
-            fs,fp,fo = tf.nn.embedding_lookup(self.entity_embedding,fs),tf.nn.embedding_lookup(self.relational_embedding,fp),tf.nn.embedding_lookup(self.entity_embedding,fo)
+            fs,fp,fo = self.entity_embedding(fs),self.relational_embedding(fp),self.entity_embedding(fo)
             fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
 
             false_score = self.func(fs,fp,fo,training)
             false_score = tf.math.log_sigmoid(self.neg_label*K.expand_dims(false_score))
         
-            loss = self.lf(true_score,false_score) + l3_reg(self.entity_embedding,self.regularization) + l3_reg(self.relational_embedding,self.regularization)
+            loss = self.lf(true_score,false_score)
         else:
             loss = 0.0
         
