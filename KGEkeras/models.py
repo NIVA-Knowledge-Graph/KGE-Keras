@@ -85,10 +85,7 @@ class EmbeddingModel(tf.keras.Model):
             Use dropout.
         """
         super(EmbeddingModel, self).__init__(name=name)
-        if regularization != 0.0:
-            reg = lambda x: l3_reg(x,regularization)
-        else:
-            reg = None
+        self.regularization = regularization
         
         self.num_entities = num_entities
         self.num_relations = num_relations
@@ -181,7 +178,7 @@ class EmbeddingModel(tf.keras.Model):
             false_score = self.func(fs,fp,fo,training)
             false_score = tf.math.log_sigmoid(self.neg_label*K.expand_dims(false_score))
         
-            loss = self.lf(true_score,false_score)
+            loss = self.lf(true_score,false_score) + l3_reg(self.entity_embedding,self.regularization) + l3_reg(self.relational_embedding,self.regularization)
         else:
             loss = 0.0
         
