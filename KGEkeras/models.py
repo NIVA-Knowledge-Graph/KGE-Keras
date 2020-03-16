@@ -274,8 +274,7 @@ class ConvE(EmbeddingModel):
         self.conv_size_h = conv_size_h
         self.conv_size_w = conv_size_w
         
-        self.ls = [BatchNormalization(),
-                  Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
+        self.ls = [Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
                   Activation('relu'),
                   Dropout(self.hidden_dp),
                   Flatten(),
@@ -350,8 +349,7 @@ class ConvKB(EmbeddingModel):
         
         self.w, self.h = factors(3*self.dim).pop(-1)
         
-        block = [BatchNormalization(),
-                  Conv2D(conv_filters,(3,3),strides=(1,1)),
+        block = [Conv2D(conv_filters,(3,3),strides=(1,1)),
                   Activation('relu'),
                   Dropout(hidden_dp)]
         
