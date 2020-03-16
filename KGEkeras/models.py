@@ -92,8 +92,10 @@ class EmbeddingModel(tf.keras.Model):
         
         self.num_entities = num_entities
         self.num_relations = num_relations
-        self.entity_embedding = Embedding(input_dim=num_entities, output_dim=e_dim,embeddings_initializer=glorot_normal(),embeddings_regularizer=reg)
-        self.relational_embedding = Embedding(input_dim=num_relations, output_dim=r_dim,embeddings_initializer=glorot_normal(),embeddings_regularizer=reg)
+        
+        self.entity_embedding = tf.Variable(tf.random.uniform([num_entities,e_dim]),trainable=True)
+        self.relational_embedding = tf.Variable(tf.random.uniform([num_relations,r_dim]),trainable=True)
+        
         self.dp = dp
         self.loss_function = loss_function
         self.negative_samples = negative_samples
@@ -144,16 +146,17 @@ class EmbeddingModel(tf.keras.Model):
         
         self.__dict__.update(kwargs)
     
+    
     def call(self,inputs,training=False):
         """
         Parameters
         ----------
         inputs : tensor, shape = (batch_size, 3)
         """
+        
         s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
         fp = p
-        s,p,o = self.entity_embedding(s), self.relational_embedding(p), self.entity_embedding(o)
-        
+        s,p,o = tf.nn.embedding_lookup(self.entity_embedding,s),tf.nn.embedding_lookup(self.relational_embedding,p),tf.nn.embedding_lookup(self.entity_embedding,o)
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
         
         true_score = self.func(s,p,o,training)
@@ -166,13 +169,13 @@ class EmbeddingModel(tf.keras.Model):
                                 dtype=tf.dtypes.int32)
 
             fp = tf.repeat(fp, self.negative_samples, 0)
-
+            
             fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
                                 minval=0, 
                                 maxval=self.num_entities,
                                 dtype=tf.dtypes.int32)
 
-            fs,fp,fo = self.entity_embedding(fs), self.relational_embedding(fp), self.entity_embedding(fo)
+            fs,fp,fo = tf.nn.embedding_lookup(self.entity_embedding,fs),tf.nn.embedding_lookup(self.relational_embedding,fp),tf.nn.embedding_lookup(self.entity_embedding,fo)
             fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
 
             false_score = self.func(fs,fp,fo,training)
