@@ -148,6 +148,8 @@ class EmbeddingModel(tf.keras.Model):
         
         self.__dict__.update(kwargs)
     
+    def get_config(self):
+        return self.__dict__
     
     def call(self,inputs,training=False):
         """
@@ -329,10 +331,13 @@ class ConvR(EmbeddingModel):
             
     def func(self,s,p,o, training = False):
         
-        s = tf.reshape(s, (-1,1,self.w,self.h,1))
-        p = tf.reshape(p,(-1,self.conv_size_w,self.conv_size_h,1,self.conv_filters))
+        def forward(x):
+            a, b = x[:self.e_dim], x[self.e_dim:]
+            a = tf.reshape(a, (1,self.w,self.h,1))
+            b = tf.reshape(b,(self.conv_size_w,self.conv_size_h,1,self.conv_filters))
+            return tf.nn.conv2d(a, b, strides = [1,1], padding='SAME')
         
-        x = tf.nn.conv3d(s, p, strides = [1,1,2,2,1], padding='SAME')
+        x = tf.map_fn(forward, Concatenate(axis=-1)([s,p]))
         
         for l in self.ls:
             x = l(x)
@@ -362,7 +367,7 @@ class ConvKB(EmbeddingModel):
         for _ in range(num_blocks):
             self.ls.extend(block)
         
-        self.ls.extend([Reshape((-1,)),
+        self.ls.extend([Flatten(),
                   Dense(self.dim),
                   Activation('relu'),
                   Dropout(hidden_dp),
@@ -374,6 +379,7 @@ class ConvKB(EmbeddingModel):
         o = K.expand_dims(o,axis=-1)
         x = Concatenate(axis=-1)([s,p,o])
         x = K.expand_dims(x,axis=-1)
+        
         x = tf.reshape(x, (-1,self.h,self.w,1))
         
         for l in self.ls:
@@ -460,7 +466,7 @@ class RotatE(EmbeddingModel):
         re_s, im_s = tf.split(s,num_or_size_splits=2,axis=-1)
         re_o, im_o = tf.split(o,num_or_size_splits=2,axis=-1)
         
-        phase_r = p/(self.embedding_range/self.pi)
+        phase_r = p/(self.embedding_range/self.pi) # try np.wrap
         re_r = tf.math.cos(phase_r)
         im_r = tf.math.sin(phase_r)
         
