@@ -6,16 +6,19 @@ from tensorflow.keras.losses import binary_crossentropy
 import tensorflow.keras.backend as K
 import tensorflow as tf
 import numpy as np
+from tensorflow.keras.initializers import RandomUniform
 
 from tensorflow.keras.initializers import glorot_normal
 
 from tensorflow.keras.constraints import UnitNorm, MaxNorm
 
+EPSILON = 1e-6
+
 def pointwize_hinge(ytrue,ypred,margin=1):
     return tf.reduce_sum(tf.nn.relu(margin-ytrue*ypred))
 
 def pointwize_logistic(ytrue,ypred):
-    return tf.reduce_sum(tf.math.log(1+tf.math.exp(-ytrue*ypred)))
+    return tf.reduce_sum(tf.math.log(EPSILON+1+tf.math.exp(-ytrue*ypred)))
 
 def pointwize_square_loss(ytrue,ypred):
     return 0.5 * tf.reduce_sum(tf.square(margin-ytrue*ypred))
@@ -24,7 +27,7 @@ def pairwize_hinge(true,false,margin=1):
     return tf.reduce_sum(tf.nn.relu(margin+false-true))
 
 def pairwize_logistic(true,false):
-    return tf.reduce_sum(tf.math.log(1+tf.math.exp(false-true)))
+    return tf.reduce_sum(tf.math.log(EPSILON+1+tf.math.exp(false-true)))
 
 def pairwize_square_loss(true,false):
     return - tf.reduce_sum(tf.square(false-true))
@@ -94,8 +97,10 @@ class EmbeddingModel(tf.keras.Model):
         self.num_entities = num_entities
         self.num_relations = num_relations
         
-        self.entity_embedding = Embedding(num_entities,e_dim,embeddings_regularizer=reg)
-        self.relational_embedding = Embedding(num_relations,r_dim,embeddings_regularizer=reg)
+        init_e = RandomUniform(minval=-1/e_dim, maxval=1/e_dim)
+        init_r = RandomUniform(minval=-1/r_dim, maxval=1/r_dim)
+        self.entity_embedding = Embedding(num_entities,e_dim,embeddings_initializer=init_e, embeddings_regularizer=reg)
+        self.relational_embedding = Embedding(num_relations,r_dim,embeddings_initializer=init_r, embeddings_regularizer=reg)
         
         self.dp = dp
         self.loss_function = loss_function
@@ -166,28 +171,25 @@ class EmbeddingModel(tf.keras.Model):
         true_score = self.func(s,p,o,training)
         true_score = tf.math.log_sigmoid(self.pos_label*K.expand_dims(true_score))
         
-        if training:
-            fs = tf.random.uniform((self.negative_samples*self.batch_size,),
-                                minval=0, 
-                                maxval=self.num_entities, 
-                                dtype=tf.dtypes.int32)
+        fs = tf.random.uniform((self.negative_samples*self.batch_size,),
+                            minval=0, 
+                            maxval=self.num_entities, 
+                            dtype=tf.dtypes.int32)
 
-            fp = tf.repeat(fp, self.negative_samples, 0)
-            
-            fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
-                                minval=0, 
-                                maxval=self.num_entities,
-                                dtype=tf.dtypes.int32)
-
-            fs,fp,fo = self.entity_embedding(fs),self.relational_embedding(fp),self.entity_embedding(fo)
-            fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
-
-            false_score = self.func(fs,fp,fo,training)
-            false_score = tf.math.log_sigmoid(self.neg_label*K.expand_dims(false_score))
+        fp = tf.repeat(fp, self.negative_samples, 0)
         
-            loss = self.lf(true_score,false_score)
-        else:
-            loss = 0.0
+        fo = tf.random.uniform((self.negative_samples*self.batch_size,), 
+                            minval=0, 
+                            maxval=self.num_entities,
+                            dtype=tf.dtypes.int32)
+
+        fs,fp,fo = self.entity_embedding(fs),self.relational_embedding(fp),self.entity_embedding(fo)
+        fs,fp,fo = Dropout(self.dp)(fs),Dropout(self.dp)(fp),Dropout(self.dp)(fo)
+
+        false_score = self.func(fs,fp,fo,training)
+        false_score = tf.math.log_sigmoid(self.neg_label*K.expand_dims(false_score))
+    
+        loss = self.lf(true_score,false_score)
         
         self.add_loss(self.loss_weight*loss)
         
@@ -348,7 +350,7 @@ class ConvKB(EmbeddingModel):
     def __init__(self,
                  name='ConvKB', 
                  hidden_dp=0.2,
-                 conv_filters=8,
+                 conv_filters=3,
                  num_blocks = 1,
                  **kwargs):
         """ConvKB implmentation."""
@@ -357,9 +359,9 @@ class ConvKB(EmbeddingModel):
         
         self.dim = kwargs['e_dim']
         
-        self.w, self.h = factors(3*self.dim).pop(-1)
+        self.w, self.h = self.dim, 3
         
-        block = [Conv2D(conv_filters,(3,3),strides=(1,1)),
+        block = [Conv2D(conv_filters,(1,3),strides=(1,1)),
                   Activation('relu'),
                   Dropout(hidden_dp)]
         
@@ -367,11 +369,8 @@ class ConvKB(EmbeddingModel):
         for _ in range(num_blocks):
             self.ls.extend(block)
         
-        self.ls.extend([Flatten(),
-                  Dense(self.dim),
-                  Activation('relu'),
-                  Dropout(hidden_dp),
-                  Dense(1)])
+        self.ls.extend([Reshape((3,-1)),
+                        Lambda(lambda x: tf.reduce_sum(x[:,0]*x[:,1]*x[:,2],axis=-1))])
         
     def func(self, s,p,o, training = False):
         s = K.expand_dims(s,axis=-1)
@@ -393,7 +392,6 @@ class HAKE(EmbeddingModel):
                  gamma = 12,  
                  phase_weight = 0.5,
                  mod_weight = 1,
-                 norm = 2,
                  name='HAKE',
                  **kwargs):
         """HAKE implmentation."""
@@ -405,7 +403,6 @@ class HAKE(EmbeddingModel):
         self.epsilon = epsilon
         self.phase_weight = phase_weight
         self.mod_weight = mod_weight
-        self.norm = norm
         
         self.pi = np.pi
         self.embedding_range = (self.gamma + self.epsilon) / self.e_dim / 2
@@ -425,7 +422,7 @@ class HAKE(EmbeddingModel):
         bias_p = K.clip(bias_p,min_value=-np.Inf,max_value=1.)
         bias_p = tf.where(bias_p < -K.abs(mod_p), -K.abs(mod_p), bias_p)
         
-        return self.gamma - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p)) + self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=self.norm,axis=-1))
+        return self.gamma + (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p), ord=2) - self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=1,axis=-1))
         
 class ModE(EmbeddingModel):
     def __init__(self,
@@ -483,7 +480,7 @@ class RotatE(EmbeddingModel):
 class pRotatE(EmbeddingModel):
     def __init__(self,
                  gamma=12,
-                 norm=2,
+                 norm=1,
                  epsilon=2,
                  modulus=0.5,
                  name='pRotatE',
@@ -506,7 +503,7 @@ class pRotatE(EmbeddingModel):
         phase_s = s/(self.embedding_range/self.pi)
         phase_o = o/(self.embedding_range/self.pi)
         
-        score = tf.abs(tf.math.sin(phase_s + phase_r - phase_o))
+        score = tf.abs(tf.math.sin((phase_s + phase_r - phase_o)/2))
         
         return self.gamma - tf.reduce_sum(score,axis=1)*self.modulus
 
