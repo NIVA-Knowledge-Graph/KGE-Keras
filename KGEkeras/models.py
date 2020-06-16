@@ -144,8 +144,8 @@ class EmbeddingModel(tf.keras.Model):
         inputs : tensor, shape = (batch_size, 3)
         """
         
-        s,p,o = inputs[:,0],inputs[:,1],inputs[:,2]
-        fs,fp,fo = s,p,o
+        s,p,o = tf.unstack(inputs,axis=1)
+        fs,fp,fo = tf.unstack(inputs,axis=1)
         
         s,p,o = self.entity_embedding(s),self.relational_embedding(p),self.entity_embedding(o)
         s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
