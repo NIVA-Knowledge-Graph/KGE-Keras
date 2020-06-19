@@ -124,7 +124,7 @@ class EmbeddingModel(tf.keras.Model):
             lf = pw_loss
             
         elif loss_type == 'sigmoid':
-            lf = lambda x,y: - (tf.reduce_mean(tf.math.sigmoid(x)) + tf.reduce_mean(tf.math.sigmoid(-y))) / 2
+            lf = lambda x,y: 1 - (tf.reduce_mean(tf.math.sigmoid(x)) + tf.reduce_mean(tf.math.sigmoid(-y))) / 2
         elif loss_type == 'softplus':
             lf = lambda x,y: (tf.reduce_mean(tf.math.softplus(-x)) + tf.reduce_mean(tf.math.softplus(y))) / 2
         else:
@@ -205,7 +205,10 @@ class TransE(EmbeddingModel):
         self.norm = norm
         
     def func(self, s,p,o, training = False):
-        return self.gamma - tf.norm(s+p-o, axis=1, ord=self.norm)
+        if self.gamma > 0:
+            return self.gamma - tf.norm(s+p-o, axis=1, ord=self.norm)
+        else:
+            return tf.norm(s+p-o, axis=1, ord=self.norm)
     
 class CosinE(EmbeddingModel):
     def __init__(self, 
@@ -417,7 +420,10 @@ class HAKE(EmbeddingModel):
         bias_p = K.clip(bias_p,min_value=-np.Inf,max_value=1.)
         bias_p = tf.where(bias_p < -K.abs(mod_p), -K.abs(mod_p), bias_p)
         
-        return self.gamma + (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p), ord=2) - self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=1,axis=-1))
+        if self.gamma > 0:
+            return self.gamma + (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p), ord=2) - self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=1,axis=-1))
+        else:
+            return - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p), ord=2) - self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=1,axis=-1))
         
 class ModE(EmbeddingModel):
     def __init__(self,
@@ -434,7 +440,10 @@ class ModE(EmbeddingModel):
         self.gamma
        
     def func(self, s,p,o, training = False):
-        return self.gamma - tf.norm(s * p - o, ord=self.norm, axis=-1)
+        if self.gamma > 0:
+            return self.gamma - tf.norm(s * p - o, ord=self.norm, axis=-1)
+        else:
+            return tf.norm(s * p - o, ord=self.norm, axis=-1)
     
 class RotatE(EmbeddingModel):
     def __init__(self,
@@ -458,7 +467,8 @@ class RotatE(EmbeddingModel):
         re_s, im_s = tf.split(s,num_or_size_splits=2,axis=-1)
         re_o, im_o = tf.split(o,num_or_size_splits=2,axis=-1)
         
-        phase_r = p/(self.embedding_range/self.pi) # try np.wrap
+        phase_r = tf.math.atan2(tf.math.sin(p),tf.math.cos(p))
+        
         re_r = tf.math.cos(phase_r)
         im_r = tf.math.sin(phase_r)
         
@@ -467,10 +477,13 @@ class RotatE(EmbeddingModel):
         re_score = re_score - re_o
         im_score = im_score - im_o
         
-        score = tf.concat([re_score, im_score], axis = 1)
-        score = tf.reduce_sum(score, axis=1)
+        score = Concatenate(axis=1)([re_score,im_score])
+        score = tf.reduce_sum(score,axis=1)
         
-        return self.gamma - score
+        if self.gamma > 0:
+            return self.gamma - score
+        else:
+            return score
     
 class pRotatE(EmbeddingModel):
     def __init__(self,
@@ -492,11 +505,14 @@ class pRotatE(EmbeddingModel):
         
     def func(self, s,p,o, training=False):
         
-        phase_r = p/(self.embedding_range/self.pi)
-        phase_s = s/(self.embedding_range/self.pi)
-        phase_o = o/(self.embedding_range/self.pi)
+        phase_s = tf.math.atan2(tf.math.sin(s),tf.math.cos(s))
+        phase_p = tf.math.atan2(tf.math.sin(p),tf.math.cos(p))
+        phase_o = tf.math.atan2(tf.math.sin(o),tf.math.cos(o))
         
-        score = tf.abs(tf.math.sin((phase_s + phase_r - phase_o)/2))
+        score = tf.abs(tf.math.sin((phase_s + phase_p - phase_o)/2))
+        if self.gamma > 0:
+            return self.gamma - tf.reduce_sum(score,axis=1)*self.modulus
+        else:
+            return tf.reduce_sum(score,axis=1)*self.modulus
         
-        return self.gamma - tf.reduce_sum(score,axis=1)*self.modulus
         
