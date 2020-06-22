@@ -223,7 +223,9 @@ class LiteralE(tf.keras.Model):
         if self.func == 'concatenate':
             f = Concatenate(axis=-1)
         
-        s,p,o = f([s,literal_s]),p,f([o,literal_o])
+        s = Dense(self.model.e_dim,activation='relu')(f([s,literal_s]))
+        p = Dense(self.model.r_dim,activation='relu')(p)
+        o = Dense(self.model.e_dim,activation='relu')(f([o,literal_o]))
         
         return self.model([s,p,o],training=training)
         
