@@ -145,16 +145,15 @@ class EmbeddingModel(tf.keras.Model):
         """
         
         s,p,o = tf.unstack(inputs,axis=1)
-        fs,fp,fo = tf.unstack(inputs,axis=1)
         
-        s,p,o = self.entity_embedding(s),self.relational_embedding(p),self.entity_embedding(o)
-        s,p,o = Dropout(self.dp)(s),Dropout(self.dp)(p),Dropout(self.dp)(o)
-        
-        true_score = self.func(s,p,o,training)
+        def lookup_entity(a):
+            return Dropout(self.dp)(self.entity_embedding(a))
+        def lookup_relation(a):
+            return Dropout(self.dp)(self.relational_embedding(a))
         
         #currupt object
-        fs1 = tf.repeat(fs, self.negative_samples, 0)
-        fp1 = tf.repeat(fp, self.negative_samples, 0)
+        fs1 = tf.repeat(s, self.negative_samples, 0)
+        fp1 = tf.repeat(p, self.negative_samples, 0)
         fo1 = tf.random.uniform((self.negative_samples*self.batch_size,), 
                             minval=0, 
                             maxval=self.num_entities,
@@ -165,22 +164,69 @@ class EmbeddingModel(tf.keras.Model):
                             minval=0, 
                             maxval=self.num_entities, 
                             dtype=tf.dtypes.int32)
-        fp2 = tf.repeat(fp, self.negative_samples, 0)
-        fo2 = tf.repeat(fo, self.negative_samples, 0)
+        fp2 = tf.repeat(p, self.negative_samples, 0)
+        fo2 = tf.repeat(o, self.negative_samples, 0)
 
-        fs1,fp1,fo1 = self.entity_embedding(fs1),self.relational_embedding(fp1),self.entity_embedding(fo1)
-        fs1,fp1,fo1 = Dropout(self.dp)(fs1),Dropout(self.dp)(fp1),Dropout(self.dp)(fo1)
-        fs2,fp2,fo2 = self.entity_embedding(fs2),self.relational_embedding(fp2),self.entity_embedding(fo2)
-        fs2,fp2,fo2 = Dropout(self.dp)(fs2),Dropout(self.dp)(fp2),Dropout(self.dp)(fo2)
+        s,p,o = lookup_entity(s),lookup_relation(p),lookup_entity(o)
+        fs1,fp1,fo1 = lookup_entity(fs1),lookup_relation(fp1),lookup_entity(fo1)
+        fs2,fp2,fo2 = lookup_entity(fs2),lookup_relation(fp2),lookup_entity(fo2)
 
+        true_score = self.func(s,p,o,training)
         false_score1 = self.func(fs1,fp1,fo1,training)
         false_score2 = self.func(fs2,fp2,fo2,training)
         
-        loss = (self.lf(true_score,false_score1)+self.lf(true_score,false_score2))/2
+        loss1 = self.lf(true_score,false_score1)
+        loss2 = self.lf(true_score,false_score2)
+        loss = (loss1+loss2)/2
             
         self.add_loss(self.loss_weight*loss)
         
         return true_score, loss
+
+class LiteralE(tf.keras.Model):
+    def __init__(self,
+                 model,
+                 func='concatenate',
+                 name='LiteralE', 
+                 **kwargs):
+        super(LiteralE, self).__init__(**kwargs)
+        self.model = model
+        self.func = func
+        
+    def get_config(self):
+        return self.__dict__
+    
+    def call(self,inputs,training=False):
+        s, p, o, literal_s, literal_o = tf.unstack(inputs,axis=1)
+        
+        if self.func == 'add':
+            _, s_shape = tf.shape(s)
+            _, p_shape = tf.shape(p)
+            _, o_shape = tf.shape(o)
+            _, literal_s_shape = tf.shape(literal_s)
+            _, literal_o_shape = tf.shape(literal_o)
+            
+            if s_shape > literal_s_shape:
+                literal_s = tf.pad(literal_s, [0,s_shape-literal_s_shape])
+            else:
+                s = tf.pad(s, [0,literal_s_shape-s_shape])
+            if o_shape > literal_o_shape:
+                literal_o = tf.pad(literal_o, [0,o_shape-literal_o_shape])
+            else:
+                o = tf.pad(o, [0,1,literal_o_shape-o_shape])
+            
+            if p_shape < tf.shape(s)[1] or p_shape < tf.shape(p)[1]:
+                p = tf.pad(p, [0,tf.shape(s)[1]-p_shape])
+            
+            f = Add(axis=-1)
+        
+        if self.func == 'concatenate':
+            f = Concatenate(axis=-1)
+        
+        s,p,o = f([s,literal_s]),p,f([o,literal_o])
+        
+        return self.model([s,p,o],training=training)
+        
 
 class DistMult(EmbeddingModel):
     def __init__(self,
@@ -211,7 +257,7 @@ class TransE(EmbeddingModel):
             return tf.norm(s+p-o, axis=1, ord=self.norm)
     
 class CosinE(EmbeddingModel):
-    def __init__(self, 
+    def __init__(self,
                  name='CosinE',
                  **kwargs):
         """CosinE implmentation."""
