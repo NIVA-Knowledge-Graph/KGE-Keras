@@ -44,8 +44,7 @@ class EmbeddingModel(tf.keras.Model):
                  num_relations, 
                  negative_samples=2, 
                  batch_size=16,
-                 loss_function='hinge',
-                 loss_type = 'pairwize',
+                 loss_type = 'margin',
                  name='EmbeddingModel',
                  use_bn = True, 
                  dp = 0.2,
@@ -101,7 +100,6 @@ class EmbeddingModel(tf.keras.Model):
         self.relational_embedding = Embedding(num_relations,r_dim,embeddings_initializer=init_r, embeddings_regularizer=reg)
         
         self.dp = dp
-        self.loss_function = loss_function
         self.negative_samples = negative_samples
         self.batch_size = batch_size
         self.e_dim = e_dim
@@ -197,37 +195,47 @@ class LiteralE(tf.keras.Model):
         return self.__dict__
     
     def call(self,inputs,training=False):
-        s, p, o, literal_s, literal_o = tf.unstack(inputs,axis=1)
         
-        if self.func == 'add':
-            _, s_shape = tf.shape(s)
-            _, p_shape = tf.shape(p)
-            _, o_shape = tf.shape(o)
-            _, literal_s_shape = tf.shape(literal_s)
-            _, literal_o_shape = tf.shape(literal_o)
-            
-            if s_shape > literal_s_shape:
-                literal_s = tf.pad(literal_s, [0,s_shape-literal_s_shape])
-            else:
-                s = tf.pad(s, [0,literal_s_shape-s_shape])
-            if o_shape > literal_o_shape:
-                literal_o = tf.pad(literal_o, [0,o_shape-literal_o_shape])
-            else:
-                o = tf.pad(o, [0,1,literal_o_shape-o_shape])
-            
-            if p_shape < tf.shape(s)[1] or p_shape < tf.shape(p)[1]:
-                p = tf.pad(p, [0,tf.shape(s)[1]-p_shape])
-            
-            f = Add(axis=-1)
+        print(inputs)
+        s, p, o, literal_s, literal_o = inputs
         
-        if self.func == 'concatenate':
-            f = Concatenate(axis=-1)
+        
+        #if self.func == 'add':
+            #_, s_shape = tf.shape(s)
+            #_, p_shape = tf.shape(p)
+            #_, o_shape = tf.shape(o)
+            #_, literal_s_shape = tf.shape(literal_s)
+            #_, literal_o_shape = tf.shape(literal_o)
+            
+            #if s_shape > literal_s_shape:
+                #literal_s = tf.pad(literal_s, [0,s_shape-literal_s_shape])
+            #else:
+                #s = tf.pad(s, [0,literal_s_shape-s_shape])
+            #if o_shape > literal_o_shape:
+                #literal_o = tf.pad(literal_o, [0,o_shape-literal_o_shape])
+            #else:
+                #o = tf.pad(o, [0,1,literal_o_shape-o_shape])
+            
+            #if p_shape < tf.shape(s)[1] or p_shape < tf.shape(p)[1]:
+                #p = tf.pad(p, [0,tf.shape(s)[1]-p_shape])
+            
+            #f = Add(axis=-1)
+        
+        #if self.func == 'concatenate':
+        f = Concatenate(axis=-1)
+        
+        s,p,o = self.model.entity_embedding(s),self.model.relational_embedding(p),self.model.entity_embedding(o)
+        
+        print(s,literal_s)
+        
+        s = f([s,literal_s])
+        print(s)
         
         s = Dense(self.model.e_dim,activation='relu')(f([s,literal_s]))
         p = Dense(self.model.r_dim,activation='relu')(p)
         o = Dense(self.model.e_dim,activation='relu')(f([o,literal_o]))
         
-        return self.model([s,p,o],training=training)
+        return self.model.func([s,p,o],training=training)
         
 
 class DistMult(EmbeddingModel):
@@ -338,9 +346,9 @@ class ConvE(EmbeddingModel):
                   Dropout(self.hidden_dp)]
         
     def func(self, s,p,o, training = False):
-        s = Reshape((self.w,self.h))(s)
-        p = Reshape((self.w,self.h))(p)
-        x = Concatenate(axis=1)([s,p])
+        s = tf.reshape(s,(self.w,self.h))
+        p = tf.reshape(p,(self.w,self.h))
+        x = tf.concat([s,p],axis=1)
         x = K.expand_dims(x,axis=-1)
         
         for l in self.ls:
@@ -422,7 +430,7 @@ class ConvKB(EmbeddingModel):
         s = K.expand_dims(s,axis=-1)
         p = K.expand_dims(p,axis=-1)
         o = K.expand_dims(o,axis=-1)
-        x = Concatenate(axis=-1)([s,p,o])
+        x = tf.concat([s,p,o],axis=-1)
         x = K.expand_dims(x,axis=-1)
         
         x = tf.reshape(x, (-1,self.h,self.w,1))
@@ -525,7 +533,7 @@ class RotatE(EmbeddingModel):
         re_score = re_score - re_o
         im_score = im_score - im_o
         
-        score = Concatenate(axis=1)([re_score,im_score])
+        score = tf.concat([re_score,im_score],axis=1)
         score = tf.reduce_sum(score,axis=1)
         
         if self.gamma > 0:
