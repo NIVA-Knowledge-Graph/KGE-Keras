@@ -180,62 +180,6 @@ class EmbeddingModel(tf.keras.Model):
         self.add_loss(self.loss_weight*loss)
         
         return true_score, loss
-
-class LiteralE(tf.keras.Model):
-    def __init__(self,
-                 model,
-                 func='concatenate',
-                 name='LiteralE', 
-                 **kwargs):
-        super(LiteralE, self).__init__(**kwargs)
-        self.model = model
-        self.func = func
-        
-    def get_config(self):
-        return self.__dict__
-    
-    def call(self,inputs,training=False):
-        
-        print(inputs)
-        s, p, o, literal_s, literal_o = inputs
-        
-        
-        #if self.func == 'add':
-            #_, s_shape = tf.shape(s)
-            #_, p_shape = tf.shape(p)
-            #_, o_shape = tf.shape(o)
-            #_, literal_s_shape = tf.shape(literal_s)
-            #_, literal_o_shape = tf.shape(literal_o)
-            
-            #if s_shape > literal_s_shape:
-                #literal_s = tf.pad(literal_s, [0,s_shape-literal_s_shape])
-            #else:
-                #s = tf.pad(s, [0,literal_s_shape-s_shape])
-            #if o_shape > literal_o_shape:
-                #literal_o = tf.pad(literal_o, [0,o_shape-literal_o_shape])
-            #else:
-                #o = tf.pad(o, [0,1,literal_o_shape-o_shape])
-            
-            #if p_shape < tf.shape(s)[1] or p_shape < tf.shape(p)[1]:
-                #p = tf.pad(p, [0,tf.shape(s)[1]-p_shape])
-            
-            #f = Add(axis=-1)
-        
-        #if self.func == 'concatenate':
-        f = Concatenate(axis=-1)
-        
-        s,p,o = self.model.entity_embedding(s),self.model.relational_embedding(p),self.model.entity_embedding(o)
-        
-        print(s,literal_s)
-        
-        s = f([s,literal_s])
-        print(s)
-        
-        s = Dense(self.model.e_dim,activation='relu')(f([s,literal_s]))
-        p = Dense(self.model.r_dim,activation='relu')(p)
-        o = Dense(self.model.e_dim,activation='relu')(f([o,literal_o]))
-        
-        return self.model.func([s,p,o],training=training)
         
 
 class DistMult(EmbeddingModel):
