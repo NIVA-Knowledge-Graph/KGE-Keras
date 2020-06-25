@@ -115,9 +115,7 @@ class EmbeddingModel(tf.keras.Model):
         
         if loss_type == 'margin':
             def pw_loss(x,y):
-                x = tf.repeat(x,self.negative_samples,0)
-                x = tf.reshape(x,(-1,1))
-                y = tf.reshape(y,(-1,1))
+                x = tf.tile(x,[self.negative_samples])
                 return tf.reduce_mean(tf.math.maximum(x - y + margin, 0))
             lf = pw_loss
             
@@ -170,9 +168,9 @@ class EmbeddingModel(tf.keras.Model):
         fs2,fp2,fo2 = lookup_entity(fs2),lookup_relation(fp2),lookup_entity(fo2)
 
         true_score = self.func(s,p,o,training)
+        
         false_score1 = self.func(fs1,fp1,fo1,training)
         false_score2 = self.func(fs2,fp2,fo2,training)
-        
         loss1 = self.lf(true_score,false_score1)
         loss2 = self.lf(true_score,false_score2)
         loss = (loss1+loss2)/2
@@ -218,7 +216,8 @@ class CosinE(EmbeddingModel):
         super(CosinE, self).__init__(name=name,**kwargs)
         
     def func(self, s,p,o, training = False):
-        return - (1+2*cosine_similarity(s+p,o,axis=-1))
+        return -(1+2*cosine_similarity(s+p,o,axis=1))
+        
 
 class ComplEx(EmbeddingModel):
     def __init__(self,
@@ -239,11 +238,7 @@ class ComplEx(EmbeddingModel):
         s2 = p_real*s_img*o_img
         s3 = p_img*s_real*o_img
         s4 = p_img*s_img*o_real
-        s1 = tf.reduce_sum(s1, axis=-1)
-        s2 = tf.reduce_sum(s2, axis=-1)
-        s3 = tf.reduce_sum(s3, axis=-1)
-        s4 = tf.reduce_sum(s4, axis=-1)
-        return s1+s2+s3-s4
+        return tf.reduce_sum(s1+s2+s3-s4,axis=-1)
 
 class HolE(EmbeddingModel):
     def __init__(self,
@@ -290,8 +285,8 @@ class ConvE(EmbeddingModel):
                   Dropout(self.hidden_dp)]
         
     def func(self, s,p,o, training = False):
-        s = tf.reshape(s,(self.w,self.h))
-        p = tf.reshape(p,(self.w,self.h))
+        s = tf.reshape(s,(-1,self.w,self.h))
+        p = tf.reshape(p,(-1,self.w,self.h))
         x = tf.concat([s,p],axis=1)
         x = K.expand_dims(x,axis=-1)
         
@@ -337,7 +332,7 @@ class ConvR(EmbeddingModel):
             b = tf.reshape(b,(self.conv_size_w,self.conv_size_h,1,self.conv_filters))
             return tf.nn.conv2d(a, b, strides = [1,1], padding='SAME')
         
-        x = tf.map_fn(forward, Concatenate(axis=-1)([s,p]))
+        x = tf.map_fn(forward, tf.concat([s,p],axis=-1))
         
         for l in self.ls:
             x = l(x)
