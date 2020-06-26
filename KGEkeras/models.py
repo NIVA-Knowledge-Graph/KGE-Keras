@@ -12,6 +12,7 @@ from tensorflow.keras.constraints import UnitNorm, MaxNorm
 
 EPSILON = 1e-6
 
+
 def pointwize_hinge(ytrue,ypred,margin=1):
     return tf.reduce_mean(tf.nn.relu(margin-ytrue*ypred))
 
@@ -36,6 +37,14 @@ def pairwize_cross_entropy(true, false):
 def l3_reg(weight_matrix, w = 0.01):
     return w * tf.norm(weight_matrix,ord=3)**3
 
+
+loss_function_dict = {
+    'pointwize_hinge':pointwize_hinge,
+    'pointwize_logistic':pointwize_logistic,
+    'pairwize_hinge':pairwize_hinge,
+    'pairwize_logistic':pairwize_logistic
+    }
+
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
                  e_dim, 
@@ -44,7 +53,7 @@ class EmbeddingModel(tf.keras.Model):
                  num_relations, 
                  negative_samples=2, 
                  batch_size=16,
-                 loss_type = 'margin',
+                 loss_function = 'pointwize_hinge',
                  name='EmbeddingModel',
                  use_bn = True, 
                  dp = 0.2,
@@ -111,20 +120,18 @@ class EmbeddingModel(tf.keras.Model):
         self.pos_label = 1
         self.neg_label = -1
         
-        self.loss_type = loss_type
         
-        if loss_type == 'margin':
-            def pw_loss(x,y):
-                x = tf.tile(x,[self.negative_samples])
-                return tf.reduce_mean(tf.math.maximum(x - y + margin, 0))
-            lf = pw_loss
-            
-        elif loss_type == 'sigmoid':
-            lf = lambda x,y: 1 - (tf.reduce_mean(tf.math.sigmoid(x)) + tf.reduce_mean(tf.math.sigmoid(-y))) / 2
-        elif loss_type == 'softplus':
-            lf = lambda x,y: (tf.reduce_mean(tf.math.softplus(-x)) + tf.reduce_mean(tf.math.softplus(y))) / 2
+        if loss_function == 'pointwize_hinge':
+            lf = lambda x, y: pointwize_hinge(1,x,margin) + pointwize_hinge(-1,y,margin)
+        elif loss_function == 'pointwize_logistic':
+            lf = lambda x, y: pointwize_logistic(1,x) + pointwize_logistic(-1,y)
+        elif loss_function == 'pairwize_hinge':
+            lf = lambda x,y: pairwize_hinge(tf.tile(x,[negative_samples]),y,margin)
+        elif loss_function == 'pairwize_logistic':
+            lf = lambda x,y: pairwize_logistic(tf.tile(x,[negative_samples]),y)
         else:
             raise NotImplementedError
+        
         
         self.lf = lf
        
