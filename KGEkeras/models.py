@@ -60,6 +60,7 @@ class EmbeddingModel(tf.keras.Model):
                  margin = 1,
                  loss_weight=1,
                  regularization = 0.01,
+                 use_batch_norm = True,
                  entity_embedding_args = None,
                  relational_embedding_args = None,
                  **kwargs):
@@ -99,7 +100,12 @@ class EmbeddingModel(tf.keras.Model):
             reg = lambda x: l3_reg(x,regularization)
         else:
             reg = None
-        
+            
+        self.use_batch_norm = use_batch_norm
+        if use_batch_norm:
+            self.bn_e = BatchNormalization()
+            self.bn_r = BatchNormalization()
+            
         self.num_entities = num_entities
         self.num_relations = num_relations
         
@@ -116,10 +122,10 @@ class EmbeddingModel(tf.keras.Model):
         self.margin = margin
         self.loss_weight = loss_weight
         self.regularization = regularization
+        self.use_batch_norm = use_batch_norm
        
         self.pos_label = 1
         self.neg_label = -1
-        
         
         if loss_function == 'pointwize_hinge':
             lf = lambda x, y: pointwize_hinge(1,x,margin) + pointwize_hinge(-1,y,margin)
@@ -150,10 +156,17 @@ class EmbeddingModel(tf.keras.Model):
         s,p,o = tf.unstack(inputs,axis=1)
         
         def lookup_entity(a):
-            return Dropout(self.dp)(self.entity_embedding(a))
+            if self.use_batch_norm:
+                return Dropout(self.dp)(self.bn_e(self.entity_embedding(a)))
+            else:
+                return Dropout(self.dp)(self.entity_embedding(a))
+            
         def lookup_relation(a):
-            return Dropout(self.dp)(self.relational_embedding(a))
-        
+            if self.use_batch_norm:
+                return Dropout(self.dp)(self.bn_r(self.relational_embedding(a)))
+            else:
+                return Dropout(self.dp)(self.relational_embedding(a))
+            
         #currupt object
         fs1 = tf.repeat(s, self.negative_samples, 0)
         fp1 = tf.repeat(p, self.negative_samples, 0)
@@ -284,12 +297,14 @@ class ConvE(EmbeddingModel):
         self.conv_size_w = conv_size_w
         
         self.ls = [Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
-                  Activation('relu'),
-                  Dropout(self.hidden_dp),
-                  Flatten(),
-                  Dense(self.dim),
-                  Activation('relu'),
-                  Dropout(self.hidden_dp)]
+                   BatchNormalization(),
+                    Activation('relu'),
+                    Dropout(self.hidden_dp),
+                    Flatten(),
+                    Dense(self.dim),
+                    BatchNormalization(),
+                    Activation('relu'),
+                    Dropout(self.hidden_dp)]
         
     def func(self, s,p,o, training = False):
         s = tf.reshape(s,(-1,self.w,self.h))
@@ -362,6 +377,7 @@ class ConvKB(EmbeddingModel):
         self.w, self.h = self.dim, 3
         
         block = [Conv2D(conv_filters,(1,3),strides=(1,1)),
+                 BatchNormalization(),
                   Activation('relu'),
                   Dropout(hidden_dp)]
         
@@ -422,10 +438,10 @@ class HAKE(EmbeddingModel):
         bias_p = K.clip(bias_p,min_value=-np.Inf,max_value=1.)
         bias_p = tf.where(bias_p < -K.abs(mod_p), -K.abs(mod_p), bias_p)
         
-        if self.gamma > 0:
-            return self.gamma + (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p), ord=2) - self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=1,axis=-1))
-        else:
-            return - (self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p), ord=2) - self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=1,axis=-1))
+        r_score = self.mod_weight*tf.norm(mod_s * (mod_p + bias_p) - K.abs(mod_o) * (1-bias_p), ord=2)
+        p_score = self.phase_weight*tf.norm(tf.math.sin((phase_s+phase_p-phase_o)/2), ord=1,axis=-1)
+        return self.gamma - (p_score + r_score)
+        
         
 class ModE(EmbeddingModel):
     def __init__(self,
@@ -442,10 +458,8 @@ class ModE(EmbeddingModel):
         self.gamma
        
     def func(self, s,p,o, training = False):
-        if self.gamma > 0:
-            return self.gamma - tf.norm(s * p - o, ord=self.norm, axis=-1)
-        else:
-            return tf.norm(s * p - o, ord=self.norm, axis=-1)
+        return self.gamma - tf.norm(s * p - o, ord=self.norm, axis=-1)
+        
     
 class RotatE(EmbeddingModel):
     def __init__(self,
