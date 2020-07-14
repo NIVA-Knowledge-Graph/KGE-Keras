@@ -2,48 +2,6 @@
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D, Flatten
-from tensorflow.keras.losses import binary_crossentropy, cosine_similarity
-import tensorflow.keras.backend as K
-import tensorflow as tf
-import numpy as np
-from tensorflow.keras.initializers import RandomUniform, GlorotUniform
-
-from tensorflow.keras.constraints import UnitNorm, MaxNorm
-
-EPSILON = 1e-6
-
-
-def pointwize_hinge(ytrue,ypred,margin=1):
-    return tf.reduce_mean(tf.nn.relu(margin-ytrue*ypred))
-
-def pointwize_logistic(ytrue,ypred):
-    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(-ytrue*ypred)))
-
-def pointwize_square_loss(ytrue,ypred,margin=1):
-    return 0.5 * tf.reduce_mean(tf.square(margin-ytrue*ypred))
-
-def pairwize_hinge(true,false,margin=1):
-    return tf.reduce_mean(tf.nn.relu(margin+false-true))
-
-def pairwize_logistic(true,false):
-    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(false-true)))
-
-def pairwize_square_loss(true,false):
-    return - tf.reduce_mean(tf.square(false-true))
-
-def pairwize_cross_entropy(true, false):
-    return binary_crossentropy(1,true) + binary_crossentropy(0,false)
-
-def l3_reg(weight_matrix, w = 0.01):
-    return w * tf.norm(weight_matrix,ord=3)**3
-
-
-loss_function_dict = {
-    'pointwize_hinge':pointwize_hinge,
-    'pointwize_logistic':pointwize_logistic,
-    'pairwize_hinge':pairwize_hinge,
-    'pairwize_logistic':pairwize_logistic
-    }
 
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
@@ -115,31 +73,12 @@ class EmbeddingModel(tf.keras.Model):
         self.relational_embedding = Embedding(num_relations,r_dim,embeddings_initializer=init_r, embeddings_regularizer=reg)
         
         self.dp = dp
-        self.negative_samples = negative_samples
-        self.batch_size = batch_size
         self.e_dim = e_dim
         self.r_dim = r_dim
         self.margin = margin
         self.loss_weight = loss_weight
         self.regularization = regularization
         self.use_batch_norm = use_batch_norm
-       
-        self.pos_label = 1
-        self.neg_label = -1
-        
-        if loss_function == 'pointwize_hinge':
-            lf = lambda x, y: pointwize_hinge(1,x,margin) + pointwize_hinge(-1,y,margin)
-        elif loss_function == 'pointwize_logistic':
-            lf = lambda x, y: pointwize_logistic(1,x) + pointwize_logistic(-1,y)
-        elif loss_function == 'pairwize_hinge':
-            lf = lambda x,y: pairwize_hinge(tf.tile(x,[negative_samples]),y,margin)
-        elif loss_function == 'pairwize_logistic':
-            lf = lambda x,y: pairwize_logistic(tf.tile(x,[negative_samples]),y)
-        else:
-            raise NotImplementedError
-        
-        
-        self.lf = lf
        
         self.__dict__.update(kwargs)
     
@@ -167,39 +106,11 @@ class EmbeddingModel(tf.keras.Model):
             else:
                 return Dropout(self.dp)(self.relational_embedding(a))
             
-        #currupt object
-        fs1 = tf.repeat(s, self.negative_samples, 0)
-        fp1 = tf.repeat(p, self.negative_samples, 0)
-        fo1 = tf.random.uniform((self.negative_samples*self.batch_size,), 
-                            minval=0, 
-                            maxval=self.num_entities,
-                            dtype=tf.dtypes.int32)
-        
-        #corrupt subject
-        fs2 = tf.random.uniform((self.negative_samples*self.batch_size,),
-                            minval=0, 
-                            maxval=self.num_entities, 
-                            dtype=tf.dtypes.int32)
-        fp2 = tf.repeat(p, self.negative_samples, 0)
-        fo2 = tf.repeat(o, self.negative_samples, 0)
-
         s,p,o = lookup_entity(s),lookup_relation(p),lookup_entity(o)
-        fs1,fp1,fo1 = lookup_entity(fs1),lookup_relation(fp1),lookup_entity(fo1)
-        fs2,fp2,fo2 = lookup_entity(fs2),lookup_relation(fp2),lookup_entity(fo2)
-
-        true_score = self.func(s,p,o,training)
+        score = self.func(s,p,o,training)
         
-        false_score1 = self.func(fs1,fp1,fo1,training)
-        false_score2 = self.func(fs2,fp2,fo2,training)
-        loss1 = self.lf(true_score,false_score1)
-        loss2 = self.lf(true_score,false_score2)
-        loss = (loss1+loss2)/2
-            
-        self.add_loss(self.loss_weight*loss)
-        
-        return true_score, loss
-        
-
+        return score
+    
 class DistMult(EmbeddingModel):
     def __init__(self,
                  name='DistMult', 

@@ -153,3 +153,41 @@ class KGEValidateCallback(Callback):
     def on_train_end(self, logs=None):
         self.on_epoch_end(100,logs=logs)
         
+
+from tensorflow.keras.losses import binary_crossentropy
+import tensorflow as tf
+EPSILON = 1e-6
+
+def pointwize_hinge(ytrue,ypred,margin=1,negative_samples=1):
+    return tf.reduce_mean(tf.nn.relu(margin-ytrue*ypred))
+
+def pointwize_logistic(ytrue,ypred,negative_samples=1):
+    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(-ytrue*ypred)))
+
+def pointwize_square_loss(ytrue,ypred,margin=1):
+    return 0.5 * tf.reduce_mean(tf.square(margin-ytrue*ypred))
+
+def pointwize_cross_entropy(ytrue,ypred,negative_samples=1):
+    return binary_crossentropy(ytrue,ypred)
+
+def pairwize_hinge(true,false,margin=1, negative_samples=1):
+    return tf.reduce_mean(tf.nn.relu(margin+false-tf.tile(x,[negative_samples])))
+
+def pairwize_logistic(true,false, negative_samples=1):
+    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(false-tf.tile(x,[negative_samples]))))
+
+def pairwize_square_loss(true,false, negative_samples=1):
+    return - tf.reduce_mean(tf.square(false-tf.tile(x,[negative_samples])))
+
+def l3_reg(weight_matrix, w = 0.01):
+    return w * tf.norm(weight_matrix,ord=3)**3
+
+def loss_function_dict():
+    return {
+    'pointwize_hinge':pointwize_hinge,
+    'pointwize_logistic':pointwize_logistic,
+    'pointwize_cross_entropy':pointwize_cross_entropy,
+    'pairwize_hinge':pairwize_hinge,
+    'pairwize_logistic':pairwize_logistic
+    }
+
