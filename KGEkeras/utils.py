@@ -179,12 +179,12 @@ def pairwize_logistic(true,false, negative_samples=1):
 def pairwize_square_loss(true,false, negative_samples=1):
     return - tf.reduce_mean(tf.square(false-tf.tile(x,[negative_samples])))
 
-def loss_function_dict():
+def loss_function_lookup(name):
     return {
     'pointwize_hinge':pointwize_hinge,
     'pointwize_logistic':pointwize_logistic,
     'pointwize_cross_entropy':pointwize_cross_entropy,
     'pairwize_hinge':pairwize_hinge,
     'pairwize_logistic':pairwize_logistic
-    }
+    }[name]
 
