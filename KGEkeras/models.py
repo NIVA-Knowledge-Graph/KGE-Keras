@@ -3,6 +3,9 @@
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D, Flatten
 
+def l3_reg(weight_matrix, w = 0.01):
+    return w * tf.norm(weight_matrix,ord=3)**3
+
 class EmbeddingModel(tf.keras.Model):
     def __init__(self, 
                  e_dim, 

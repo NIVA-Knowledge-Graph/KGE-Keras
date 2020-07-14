@@ -158,17 +158,17 @@ from tensorflow.keras.losses import binary_crossentropy
 import tensorflow as tf
 EPSILON = 1e-6
 
-def pointwize_hinge(ytrue,ypred,margin=1,negative_samples=1):
-    return tf.reduce_mean(tf.nn.relu(margin-ytrue*ypred))
+def pointwize_hinge(true,false,margin=1,negative_samples=1):
+    return tf.reduce_mean(tf.nn.relu(margin-true))+tf.reduce_mean(tf.nn.relu(margin+false))
 
-def pointwize_logistic(ytrue,ypred,negative_samples=1):
-    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(-ytrue*ypred)))
+def pointwize_logistic(true,false,margin=1,negative_samples=1):
+    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(-true)))+tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(false)))
 
-def pointwize_square_loss(ytrue,ypred,margin=1):
-    return 0.5 * tf.reduce_mean(tf.square(margin-ytrue*ypred))
+def pointwize_square_loss(true,false,margin=1,negative_samples=1):
+    return tf.reduce_mean(tf.square(margin-true))+tf.reduce_mean(tf.square(margin+false))
 
-def pointwize_cross_entropy(ytrue,ypred,negative_samples=1):
-    return binary_crossentropy(ytrue,ypred)
+def pointwize_cross_entropy(true,false,margin=1,negative_samples=1):
+    return binary_crossentropy(1,true)+binary_crossentropy(0,false)
 
 def pairwize_hinge(true,false,margin=1, negative_samples=1):
     return tf.reduce_mean(tf.nn.relu(margin+false-tf.tile(x,[negative_samples])))
@@ -178,9 +178,6 @@ def pairwize_logistic(true,false, negative_samples=1):
 
 def pairwize_square_loss(true,false, negative_samples=1):
     return - tf.reduce_mean(tf.square(false-tf.tile(x,[negative_samples])))
-
-def l3_reg(weight_matrix, w = 0.01):
-    return w * tf.norm(weight_matrix,ord=3)**3
 
 def loss_function_dict():
     return {
