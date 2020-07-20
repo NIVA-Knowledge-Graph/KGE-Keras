@@ -171,13 +171,13 @@ def pointwize_cross_entropy(true,false,margin=1,negative_samples=1):
     return binary_crossentropy(1,true)+binary_crossentropy(0,false)
 
 def pairwize_hinge(true,false,margin=1, negative_samples=1):
-    return tf.reduce_mean(tf.nn.relu(margin+false-tf.tile(x,[negative_samples])))
+    return tf.reduce_mean(tf.nn.relu(margin+false-tf.tile(true,[negative_samples])))
 
 def pairwize_logistic(true,false, negative_samples=1):
-    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(false-tf.tile(x,[negative_samples]))))
+    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(false-tf.tile(true,[negative_samples]))))
 
 def pairwize_square_loss(true,false, negative_samples=1):
-    return - tf.reduce_mean(tf.square(false-tf.tile(x,[negative_samples])))
+    return - tf.reduce_mean(tf.square(false-tf.tile(true,[negative_samples])))
 
 def loss_function_lookup(name):
     return {

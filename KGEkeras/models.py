@@ -2,6 +2,10 @@
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D, Flatten
+import tensorflow as tf
+import tensorflow.keras.backend as K
+import numpy as np
+
 
 def l3_reg(weight_matrix, w = 0.01):
     return w * tf.norm(weight_matrix,ord=3)**3
@@ -70,8 +74,8 @@ class EmbeddingModel(tf.keras.Model):
         self.num_entities = num_entities
         self.num_relations = num_relations
         
-        init_e = GlorotUniform()
-        init_r = GlorotUniform()
+        init_e = tf.keras.initializers.GlorotUniform()
+        init_r = tf.keras.initializers.GlorotUniform()
         self.entity_embedding = Embedding(num_entities,e_dim,embeddings_initializer=init_e, embeddings_regularizer=reg)
         self.relational_embedding = Embedding(num_relations,r_dim,embeddings_initializer=init_r, embeddings_regularizer=reg)
         
