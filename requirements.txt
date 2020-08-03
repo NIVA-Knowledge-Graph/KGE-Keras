@@ -1,0 +1,7 @@
+scipy==1.4.1
+tqdm==4.36.1
+keras_tuner==1.0.1
+Keras==2.3.1
+tf_nightly==2.2.0.dev20200218
+numpy==1.16.4
+tensorflow==2.3.0
