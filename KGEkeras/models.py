@@ -19,7 +19,6 @@ class EmbeddingModel(tf.keras.Model):
                  negative_samples=2, 
                  batch_size=16,
                  loss_function = 'pointwize_hinge',
-                 name='EmbeddingModel',
                  use_bn = True, 
                  dp = 0.2,
                  margin = 1,
@@ -28,6 +27,7 @@ class EmbeddingModel(tf.keras.Model):
                  use_batch_norm = True,
                  entity_embedding_args = None,
                  relational_embedding_args = None,
+                 name='embedding_model',
                  **kwargs):
         """
         Base class for embedding models. 
@@ -76,10 +76,18 @@ class EmbeddingModel(tf.keras.Model):
         
         init_e = tf.keras.initializers.GlorotUniform()
         init_r = tf.keras.initializers.GlorotUniform()
-        self.entity_embedding = Embedding(num_entities,e_dim,embeddings_initializer=init_e, embeddings_regularizer=reg)
-        self.relational_embedding = Embedding(num_relations,r_dim,embeddings_initializer=init_r, embeddings_regularizer=reg)
+        self.entity_embedding = Embedding(num_entities,
+                                          e_dim,
+                                          embeddings_initializer=init_e, 
+                                          embeddings_regularizer=reg, 
+                                          name=name+'_entity_embedding')
+        self.relational_embedding = Embedding(num_relations,
+                                              r_dim,
+                                              embeddings_initializer=init_r, 
+                                              embeddings_regularizer=reg, 
+                                              name=name+'_relational_embedding')
         
-        self.dp = dp
+        self.dp = Dropout(dp)
         self.e_dim = e_dim
         self.r_dim = r_dim
         self.margin = margin
@@ -103,15 +111,15 @@ class EmbeddingModel(tf.keras.Model):
         
         def lookup_entity(a):
             if self.use_batch_norm:
-                return Dropout(self.dp)(self.bn_e(self.entity_embedding(a)))
+                return self.dp(self.bn_e(self.entity_embedding(a)))
             else:
-                return Dropout(self.dp)(self.entity_embedding(a))
+                return self.dp(self.entity_embedding(a))
             
         def lookup_relation(a):
             if self.use_batch_norm:
-                return Dropout(self.dp)(self.bn_r(self.relational_embedding(a)))
+                return self.dp(self.bn_r(self.relational_embedding(a)))
             else:
-                return Dropout(self.dp)(self.relational_embedding(a))
+                return self.dp(self.relational_embedding(a))
             
         s,p,o = lookup_entity(s),lookup_relation(p),lookup_entity(o)
         score = self.func(s,p,o,training)
@@ -123,7 +131,7 @@ class DistMult(EmbeddingModel):
                  name='DistMult', 
                  **kwargs):
         """DistMult implmentation."""
-        super(DistMult, self).__init__(**kwargs)
+        super(DistMult, self).__init__(name=name,**kwargs)
         
     def func(self, s,p,o, training = False):
         return tf.reduce_sum(s*p*o, axis=-1)
@@ -207,28 +215,21 @@ class ConvE(EmbeddingModel):
         self.dim = kwargs['e_dim']
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
         self.w, self.h = factors(self.dim).pop(-1)
-        
-        self.hidden_dp = hidden_dp
     
-        self.conv_filters = conv_filters
-        self.conv_size_h = conv_size_h
-        self.conv_size_w = conv_size_w
-        
-        self.ls = [Conv2D(self.conv_filters,(self.conv_size_w,conv_size_h)),
+        self.ls = [Conv2D(conv_filters,(conv_size_w,conv_size_h)),
                    BatchNormalization(),
                     Activation('relu'),
-                    Dropout(self.hidden_dp),
+                    Dropout(hidden_dp),
                     Flatten(),
                     Dense(self.dim),
                     BatchNormalization(),
                     Activation('relu'),
-                    Dropout(self.hidden_dp)]
+                    Dropout(hidden_dp)]
         
     def func(self, s,p,o, training = False):
-        s = tf.reshape(s,(-1,self.w,self.h))
-        p = tf.reshape(p,(-1,self.w,self.h))
+        s = tf.reshape(s,(-1,self.w,self.h,1))
+        p = tf.reshape(p,(-1,self.w,self.h,1))
         x = tf.concat([s,p],axis=1)
-        x = K.expand_dims(x,axis=-1)
         
         for l in self.ls:
             x = l(x)
@@ -251,7 +252,6 @@ class ConvR(EmbeddingModel):
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
         self.w, self.h = factors(self.dim).pop(-1)
        
-        self.hidden_dp = hidden_dp
         self.conv_filters = conv_filters
         self.conv_size_h = conv_size_h
         self.conv_size_w = conv_size_w
@@ -260,7 +260,7 @@ class ConvR(EmbeddingModel):
             Flatten(),
             Activation('relu'),
             Dense(self.dim),
-            Dropout(self.hidden_dp),
+            Dropout(hidden_dp),
             Activation('relu')
             ]
         
@@ -307,13 +307,8 @@ class ConvKB(EmbeddingModel):
                         Lambda(lambda x: tf.reduce_sum(x[:,0]*x[:,1]*x[:,2],axis=-1))])
         
     def func(self, s,p,o, training = False):
-        s = K.expand_dims(s,axis=-1)
-        p = K.expand_dims(p,axis=-1)
-        o = K.expand_dims(o,axis=-1)
         x = tf.concat([s,p,o],axis=-1)
-        x = K.expand_dims(x,axis=-1)
-        
-        x = tf.reshape(x, (-1,self.h,self.w,1))
+        x = tf.reshape(x,(-1,self.w,self.h,1))
         
         for l in self.ls:
             x = l(x)
