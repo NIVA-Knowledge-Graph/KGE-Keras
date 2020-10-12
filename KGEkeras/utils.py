@@ -158,33 +158,44 @@ from tensorflow.keras.losses import binary_crossentropy
 import tensorflow as tf
 EPSILON = 1e-6
 
-def pointwize_hinge(true,false,margin=1,negative_samples=1):
+def pointwize_hinge(true,false,margin=1,negative_samples=1, reduce_mean = True):
     return tf.reduce_mean(tf.nn.relu(margin-true))+tf.reduce_mean(tf.nn.relu(margin+false))
 
-def pointwize_logistic(true,false,margin=1,negative_samples=1):
+def pointwize_logistic(true,false,margin=1,negative_samples=1, reduce_mean = True):
     return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(-true)))+tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(false)))
 
-def pointwize_square_loss(true,false,margin=1,negative_samples=1):
+def pointwize_square_loss(true,false,margin=1,negative_samples=1, reduce_mean = True):
     return tf.reduce_mean(tf.square(margin-true))+tf.reduce_mean(tf.square(margin+false))
 
-def pointwize_cross_entropy(true,false,margin=1,negative_samples=1):
+def pointwize_cross_entropy(true,false,margin=1,negative_samples=1, reduce_mean = True):
     return binary_crossentropy(1,true)+binary_crossentropy(0,false)
 
-def pairwize_hinge(true,false,margin=1, negative_samples=1):
-    return tf.reduce_mean(tf.nn.relu(margin+false-tf.tile(true,[negative_samples])))
+def pairwize_hinge(true,false,margin=1, negative_samples=1, reduce_mean = True):
+    tmp = tf.nn.relu(margin+false-tf.tile(true,[negative_samples,1]))
+    if reduce_mean:
+        return tf.reduce_mean(tmp)
+    return tmp
 
-def pairwize_logistic(true,false, negative_samples=1):
-    return tf.reduce_mean(tf.math.log(EPSILON+1+tf.math.exp(false-tf.tile(true,[negative_samples]))))
+def pairwize_logistic(true,false,margin=0, negative_samples=1, reduce_mean = True):
+    tmp = tf.math.log(EPSILON+1+tf.math.exp(false-tf.tile(true,[negative_samples,1])))
+    if reduce_mean:
+        return tf.reduce_mean(tmp)
+    return tmp
 
-def pairwize_square_loss(true,false, negative_samples=1):
-    return - tf.reduce_mean(tf.square(false-tf.tile(true,[negative_samples])))
+def pairwize_square_loss(true,false,margin=0, negative_samples=1, reduce_mean = True):
+    tmp = - tf.square(false-tf.tile(true,[negative_samples,1]))
+    if reduce_mean:
+        return tf.reduce_mean(tmp)
+    return tmp
 
 def loss_function_lookup(name):
     return {
     'pointwize_hinge':pointwize_hinge,
     'pointwize_logistic':pointwize_logistic,
     'pointwize_cross_entropy':pointwize_cross_entropy,
+    'pointwize_square_loss':,
     'pairwize_hinge':pairwize_hinge,
-    'pairwize_logistic':pairwize_logistic
+    'pairwize_logistic':pairwize_logistic,
+    'pairwize_square_loss':pairwize_square_loss
     }[name]
 

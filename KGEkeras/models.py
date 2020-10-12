@@ -1,7 +1,7 @@
 ### KG embedding version 3.
 
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D, Flatten
+from tensorflow.keras.layers import Layer, Embedding, Lambda, Multiply, Reshape, Concatenate, BatchNormalization, Conv2D, Activation, Dense, Dropout, Conv3D, Flatten, Dot
 import tensorflow as tf
 import tensorflow.keras.backend as K
 import numpy as np
@@ -23,10 +23,12 @@ class EmbeddingModel(tf.keras.Model):
                  dp = 0.2,
                  margin = 1,
                  loss_weight=1,
-                 regularization = 0.01,
+                 regularization = 0.0,
                  use_batch_norm = True,
                  entity_embedding_args = None,
                  relational_embedding_args = None,
+                 init_entities = None, 
+                 init_relations = None,
                  name='embedding_model',
                  **kwargs):
         """
@@ -81,9 +83,23 @@ class EmbeddingModel(tf.keras.Model):
                                           embeddings_initializer=init_e, 
                                           embeddings_regularizer=reg, 
                                           name=name+'_entity_embedding')
+        if init_entities is not None: 
+            self.entity_embedding = Embedding(num_entities,
+                                          e_dim,
+                                          weights=[init_entities],
+                                          embeddings_regularizer=reg, 
+                                          name=name+'_entity_embedding')
+            
         self.relational_embedding = Embedding(num_relations,
                                               r_dim,
                                               embeddings_initializer=init_r, 
+                                              embeddings_regularizer=reg, 
+                                              name=name+'_relational_embedding')
+        
+        if init_relations is not None: 
+            self.relational_embedding = Embedding(num_relations,
+                                              r_dim,
+                                              weights=[init_relations],
                                               embeddings_regularizer=reg, 
                                               name=name+'_relational_embedding')
         
@@ -199,7 +215,10 @@ class HolE(EmbeddingModel):
             tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
         
         x = circular_cross_correlation(s,o)
-        return tf.reduce_sum(p*x,axis=-1)
+        x = tf.expand_dims(x,axis=-1)
+        p = tf.expand_dims(p,axis=-1)
+        x = tf.squeeze(Dot(axes=(1,1))([p,x]),axis=-1)
+        return x
 
 class ConvE(EmbeddingModel):
     def __init__(self,
@@ -211,11 +230,11 @@ class ConvE(EmbeddingModel):
                  **kwargs):
         """ConvE implmentation."""
         super(ConvE, self).__init__(name=name,**kwargs)
-        
         self.dim = kwargs['e_dim']
         factors = lambda val: [(int(i), int(val / i)) for i in range(1, int(val**0.5)+1) if val % i == 0]
         self.w, self.h = factors(self.dim).pop(-1)
-    
+        assert self.w > 1 or self.h > 1
+
         self.ls = [Conv2D(conv_filters,(conv_size_w,conv_size_h)),
                    BatchNormalization(),
                     Activation('relu'),
