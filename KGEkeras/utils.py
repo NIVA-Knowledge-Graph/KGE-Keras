@@ -193,7 +193,7 @@ def loss_function_lookup(name):
     'pointwize_hinge':pointwize_hinge,
     'pointwize_logistic':pointwize_logistic,
     'pointwize_cross_entropy':pointwize_cross_entropy,
-    'pointwize_square_loss':,
+    'pointwize_square_loss':pointwize_square_loss,
     'pairwize_hinge':pairwize_hinge,
     'pairwize_logistic':pairwize_logistic,
     'pairwize_square_loss':pairwize_square_loss
