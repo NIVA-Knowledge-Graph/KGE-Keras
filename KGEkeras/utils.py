@@ -6,6 +6,9 @@ from random import choice
 from collections import defaultdict
 
 from tensorflow.keras.callbacks import Callback
+from tensorflow.keras.losses import binary_crossentropy
+import tensorflow as tf
+EPSILON = 1e-6
 
 def load_kg(path):
     out = []
@@ -154,10 +157,6 @@ class KGEValidateCallback(Callback):
         self.on_epoch_end(100,logs=logs)
         
 
-from tensorflow.keras.losses import binary_crossentropy
-import tensorflow as tf
-EPSILON = 1e-6
-
 def pointwize_hinge(true,false,margin=1,negative_samples=1, reduce_mean = True):
     return tf.reduce_mean(tf.nn.relu(margin-true))+tf.reduce_mean(tf.nn.relu(margin+false))
 
@@ -171,19 +170,22 @@ def pointwize_cross_entropy(true,false,margin=1,negative_samples=1, reduce_mean 
     return binary_crossentropy(1,true)+binary_crossentropy(0,false)
 
 def pairwize_hinge(true,false,margin=1, negative_samples=1, reduce_mean = True):
-    tmp = tf.nn.relu(margin+false-tf.tile(true,[negative_samples,1]))
+    false = tf.reshape(false,(-1,negative_samples))
+    tmp = tf.nn.relu(margin+false-true)
     if reduce_mean:
         return tf.reduce_mean(tmp)
     return tmp
 
 def pairwize_logistic(true,false,margin=0, negative_samples=1, reduce_mean = True):
-    tmp = tf.math.log(EPSILON+1+tf.math.exp(false-tf.tile(true,[negative_samples,1])))
+    false = tf.reshape(false,(-1,negative_samples))
+    tmp = tf.math.log(EPSILON+1+tf.math.exp(false-true))
     if reduce_mean:
-        return tf.reduce_mean(tmp)
+        return tf.reduce_mean(tmp) 
     return tmp
 
 def pairwize_square_loss(true,false,margin=0, negative_samples=1, reduce_mean = True):
-    tmp = - tf.square(false-tf.tile(true,[negative_samples,1]))
+    false = tf.reshape(false,(-1,negative_samples))
+    tmp = - tf.square(false-true)
     if reduce_mean:
         return tf.reduce_mean(tmp)
     return tmp

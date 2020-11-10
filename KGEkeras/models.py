@@ -19,12 +19,11 @@ class EmbeddingModel(tf.keras.Model):
                  negative_samples=2, 
                  batch_size=16,
                  loss_function = 'pointwize_hinge',
-                 use_bn = True, 
                  dp = 0.2,
                  margin = 1,
                  loss_weight=1,
                  regularization = 0.0,
-                 use_batch_norm = True,
+                 use_batch_norm=False,
                  entity_embedding_args = None,
                  relational_embedding_args = None,
                  init_entities = None, 
@@ -67,12 +66,7 @@ class EmbeddingModel(tf.keras.Model):
             reg = lambda x: l3_reg(x,regularization)
         else:
             reg = None
-            
-        self.use_batch_norm = use_batch_norm
-        if use_batch_norm:
-            self.bn_e = BatchNormalization()
-            self.bn_r = BatchNormalization()
-            
+        
         self.num_entities = num_entities
         self.num_relations = num_relations
         
@@ -93,14 +87,14 @@ class EmbeddingModel(tf.keras.Model):
         self.relational_embedding = Embedding(num_relations,
                                               r_dim,
                                               embeddings_initializer=init_r, 
-                                              embeddings_regularizer=reg, 
+                                              #embeddings_regularizer=reg, 
                                               name=name+'_relational_embedding')
         
         if init_relations is not None: 
             self.relational_embedding = Embedding(num_relations,
                                               r_dim,
                                               weights=[init_relations],
-                                              embeddings_regularizer=reg, 
+                                              #embeddings_regularizer=reg, 
                                               name=name+'_relational_embedding')
         
         self.dp = Dropout(dp)
@@ -109,7 +103,6 @@ class EmbeddingModel(tf.keras.Model):
         self.margin = margin
         self.loss_weight = loss_weight
         self.regularization = regularization
-        self.use_batch_norm = use_batch_norm
        
         self.__dict__.update(kwargs)
     
@@ -126,16 +119,10 @@ class EmbeddingModel(tf.keras.Model):
         s,p,o = tf.unstack(inputs,axis=1)
         
         def lookup_entity(a):
-            if self.use_batch_norm:
-                return self.dp(self.bn_e(self.entity_embedding(a)))
-            else:
-                return self.dp(self.entity_embedding(a))
+            return self.dp(self.entity_embedding(a))
             
         def lookup_relation(a):
-            if self.use_batch_norm:
-                return self.dp(self.bn_r(self.relational_embedding(a)))
-            else:
-                return self.dp(self.relational_embedding(a))
+            return self.dp(self.relational_embedding(a))
             
         s,p,o = lookup_entity(s),lookup_relation(p),lookup_entity(o)
         score = self.func(s,p,o,training)
@@ -210,15 +197,12 @@ class HolE(EmbeddingModel):
         super(HolE, self).__init__(name=name,**kwargs)
         
     def func(self, s,p,o, training = False):
-        def circular_cross_correlation(x, y):
+        def circular_cross_correlation(a, b):
             return tf.math.real(tf.signal.ifft(
-            tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(x, tf.complex64))), tf.signal.fft(tf.cast(y, tf.complex64)))))
+            tf.multiply(tf.math.conj(tf.signal.fft(tf.cast(a, tf.complex64))), tf.signal.fft(tf.cast(b, tf.complex64)))))
         
         x = circular_cross_correlation(s,o)
-        x = tf.expand_dims(x,axis=-1)
-        p = tf.expand_dims(p,axis=-1)
-        x = tf.squeeze(Dot(axes=(1,1))([p,x]),axis=-1)
-        return x
+        return tf.reduce_sum(p*x,axis=-1)
 
 class ConvE(EmbeddingModel):
     def __init__(self,
@@ -251,8 +235,11 @@ class ConvE(EmbeddingModel):
         x = tf.concat([s,p],axis=1)
         
         for l in self.ls:
-            x = l(x)
-        
+            if isinstance(l,(Dropout, BatchNormalization)):
+                x = l(x,training=training)
+            else:
+                x = l(x)
+            
         return tf.reduce_sum(x * o, axis=-1)
     
 class ConvR(EmbeddingModel):
@@ -294,7 +281,10 @@ class ConvR(EmbeddingModel):
         x = tf.map_fn(forward, tf.concat([s,p],axis=-1))
         
         for l in self.ls:
-            x = l(x)
+            if isinstance(l,(Dropout, BatchNormalization)):
+                x = l(x,training=training)
+            else:
+                x = l(x)
      
         return tf.reduce_sum(x * o, axis=-1)
     
@@ -330,7 +320,10 @@ class ConvKB(EmbeddingModel):
         x = tf.reshape(x,(-1,self.w,self.h,1))
         
         for l in self.ls:
-            x = l(x)
+            if isinstance(l,(Dropout, BatchNormalization)):
+                x = l(x,training=training)
+            else:
+                x = l(x)
         
         return x
 
