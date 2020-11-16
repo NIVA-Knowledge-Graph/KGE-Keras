@@ -8,6 +8,7 @@ from collections import defaultdict
 from tensorflow.keras.callbacks import Callback
 from tensorflow.keras.losses import binary_crossentropy
 import tensorflow as tf
+from random import choices
 EPSILON = 1e-6
 
 def load_kg(path):
@@ -17,6 +18,41 @@ def load_kg(path):
             l = l.strip().split()
             out.append(l)
     return out
+
+def generate_negative(kg, N, negative=2, check_kg=False, corrupt_head=True, corrupt_tail=True):
+    # false triples:
+    assert corrupt_head or corrupt_tail
+    R = np.repeat(np.asarray([p for _,p,_ in kg]).reshape((-1,1)),negative,axis=0)
+    fs = np.random.randint(0,N,size=(negative*len(kg),1))  
+    fo = np.random.randint(0,N,size=(negative*len(kg),1))  
+    negative_kg = np.stack([fs,R,fo],axis=1)
+    return negative_kg
+
+def oversample_data(kgs,x=None,y=None,testing=False):
+    if testing:
+        kgs = [list(kg)[:len(y)] for kg in kgs]
+    else:
+        kgs = [list(kg) for kg in kgs]
+        
+    if y is not None:
+        m = max(max(map(len,kgs)),len(y))
+    else:
+        m = max(map(len,kgs))
+    
+    out = []
+    for kg in kgs:
+        out.append(choices(kg, k=m))
+    
+    if x is not None and y is not None:
+        k = np.ceil(m/len(y))
+        y = np.repeat(y,k,axis=0)[:m]
+        x = np.repeat(x,k,axis=0)[:m,:]
+        for s in np.split(x,3,axis=1):
+            out.append(s.reshape((-1,)))
+        return [np.squeeze(np.asarray(o)) for o in out], np.asarray(y)
+    
+    else:
+        return [np.squeeze(np.asarray(o)) for o in out]
 
 def pad(kg,bs):
     kg = list(kg)

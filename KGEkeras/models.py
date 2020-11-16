@@ -23,6 +23,8 @@ class EmbeddingModel(tf.keras.Model):
                  margin = 1,
                  loss_weight=1,
                  regularization = 0.0,
+                 literal_activation=None,
+                 literals=None,
                  use_batch_norm=False,
                  entity_embedding_args = None,
                  relational_embedding_args = None,
@@ -53,6 +55,18 @@ class EmbeddingModel(tf.keras.Model):
         
         loss_type : string 
             pointwize or pairwize
+        
+        literal_activation : string or tf.keras.activation.Activation
+            if using LiteralE methodology. 
+            relu function
+            sigmoid function
+            softmax function
+            softplus function
+            softsign function
+            tanh function
+            selu function
+            elu function
+            exponential function
         
         use_bn : bool 
             Batch norm. 
@@ -97,6 +111,14 @@ class EmbeddingModel(tf.keras.Model):
                                               #embeddings_regularizer=reg, 
                                               name=name+'_relational_embedding')
         
+        if literal_activation:
+            self.literal_layer = Embedding(len(literals),
+                                           len(literals[0]),
+                                           weights=[literals],
+                                           name=name+'_literals')
+            self.literal_layer.trainable=False
+            self.literal_activation = Dense(e_dim,activation=literal_activation)
+        
         self.dp = Dropout(dp)
         self.e_dim = e_dim
         self.r_dim = r_dim
@@ -115,8 +137,9 @@ class EmbeddingModel(tf.keras.Model):
         ----------
         inputs : tensor, shape = (batch_size, 3)
         """
-        
         s,p,o = tf.unstack(inputs,axis=1)
+        l_s = s
+        l_o = o
         
         def lookup_entity(a):
             return self.dp(self.entity_embedding(a))
@@ -125,6 +148,15 @@ class EmbeddingModel(tf.keras.Model):
             return self.dp(self.relational_embedding(a))
             
         s,p,o = lookup_entity(s),lookup_relation(p),lookup_entity(o)
+        
+        if hasattr(self,'literal_layer'):
+            l_s = self.dp(self.literal_layer(l_s))
+            l_o = self.dp(self.literal_layer(l_o))
+            s = tf.concat([s,l_s],axis=-1)
+            o = tf.concat([o,l_o],axis=-1)
+            s = self.literal_activation(s)
+            o = self.literal_activation(o)
+        
         score = self.func(s,p,o,training)
         
         return score

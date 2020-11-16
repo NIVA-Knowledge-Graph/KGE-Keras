@@ -1,6 +1,6 @@
 ### tests.py
 
-from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, DenseModel, Hybrid, ConvKB, RotatE, pRotatE
+from KGEkeras.models import DistMult, HolE, TransE, ComplEx, HAKE, ConvE, ModE, ConvR, ConvKB, RotatE, pRotatE
 import numpy as np
 import tensorflow as tf
 from random import choice, choices
@@ -11,78 +11,82 @@ from tqdm import tqdm
 from keras.callbacks import Callback, EarlyStopping
 from keras.losses import hinge, binary_crossentropy
 
-import kerastuner as kt
-from kerastuner import HyperModel
-from kerastuner.tuners import RandomSearch, Hyperband, BayesianOptimization
+from tensorflow.keras.models import Model
 
-from KGEkeras.utils import load_kg, validate
+from KGEkeras.utils import load_kg, validate, loss_function_lookup, generate_negative, oversample_data
 
 models = {'DistMult':DistMult,
-           # 'TransE':TransE,
-           # 'HolE':HolE,
-           # 'ComplEx':ComplEx,
-           # 'ConvE':ConvE,
-            #'ConvR':ConvR,
-            #  'HAKE':HAKE,
-            #  'RotatE':RotatE,
-            #  'pRotatE':pRotatE
+           'TransE':TransE,
+           'HolE':HolE,
+           'ComplEx':ComplEx,
+           'ConvE':ConvE,
+            'ConvR':ConvR,
+             'HAKE':HAKE,
+             'RotatE':RotatE,
+             'pRotatE':pRotatE
          }
 
-class MyModel(tf.keras.Model):
-    def __init__(self, embedding_model,name='my_model'):
-        super(MyModel, self).__init__(name=name)
-        self.embedding_model = embedding_model
+class DataGenerator(tf.keras.utils.Sequence):
+    def __init__(self, kg, ns=10, batch_size=32, shuffle=True):
+        self.batch_size = min(batch_size,len(kg))
+        self.kg = kg
+        self.ns = ns
+        self.num_e = len(set([s for s,_,_ in kg])|set([o for _,_,o in kg]))
+        self.shuffle = shuffle
+        self.indices = list(range(len(kg)))
         
-    def call(self, inputs):
-        return self.embedding_model(inputs)
+        self.on_epoch_end()
 
-class MyHyperModel(HyperModel):
-    def __init__(self, N, M, bs):
-        self.N = N
-        self.M = M
-        self.bs = bs
+    def __len__(self):
+        return len(self.kg) // self.batch_size
+
+    def __getitem__(self, index):
+        index = self.index[index * self.batch_size:(index + 1) * self.batch_size]
+        batch = [self.indices[k] for k in index]
         
-    def build(self, hp):
-        embedding_model = models[hp.Choice('embedding_model',list(models.keys()))]
-        #dim = hp.Int('embedding_dim',50,200,step=50)
-        dim = 128
-        dm = embedding_model(e_dim=dim,
-                                  r_dim=dim,
-                                  dp=0.2,
-                                  batch_size=self.bs,
-                                  num_entities=self.N,
-                                  num_relations=self.M,
-                                  loss_function='hinge',
-                                  loss_type='pairwize',
-                                  negative_samples=100)
+        X, y = self.__get_data(batch)
+        return X, y
+
+    def on_epoch_end(self):
+        self.index = np.arange(len(self.indices))
+        if self.shuffle == True:
+            np.random.shuffle(self.index)
+
+    def __get_data(self, batch):
+        tmp_kg = np.asarray([self.kg[i] for i in batch])
+        
+        negative_kg = generate_negative(tmp_kg,N=self.num_e,negative=self.ns)
+        X = oversample_data(kgs=[tmp_kg,negative_kg])
     
-        model = MyModel(dm)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+        return X, None 
+
+def build_model(hp):
     
-        model.compile(optimizer=optimizer, loss=lambda x,y:0.0)
-        
-        return model
-        
-class myCallBack(Callback):
-    def __init__(self, validation_data=[], train_data=[], bs=32, *args, **kwargs):
-        super(myCallBack, self).__init__(*args, **kwargs)
-        self.train_data = train_data
-        self.validation_data = validation_data
-        self.bs = bs
-        
-    def on_epoch_end(self, epoch, logs = None):
-        if epoch % 10 == 0 and epoch >= 100:
-            logs = logs or {}
-            
-            tmp = validate(self.model, 
-                            self.validation_data,
-                            self.model.embedding_model.num_entities,
-                            self.bs,
-                            self.train_data)
-                
-            for k in tmp:
-                logs['val_'+k] = tmp[k]
-            print(logs)
+    params = hp.copy()
+    params['e_dim'] = params['dim']
+    params['r_dim'] = params['dim']
+    params['name'] = 'embedding_model'
+    
+    embedding_model = models[params['embedding_model']]
+    embedding_model = embedding_model(**params)
+    triple = Input((3,))
+    ftriple = Input((3,))
+    
+    inputs = [triple, ftriple]
+    
+    score = embedding_model(triple)
+    fscore = embedding_model(ftriple)
+    
+    loss_function = loss_function_lookup(params['loss_function'])
+    loss = loss_function(score,fscore,params['margin'] or 1, 1)
+    
+    model = Model(inputs=inputs, outputs=loss)
+    model.add_loss(loss)
+    
+    model.compile(optimizer='adam',
+                  loss=None)
+    
+    return model
 
 def pad(kg,bs):
     while len(kg) % bs != 0:
@@ -106,46 +110,29 @@ def main():
     entity_mapping = {e:i for i,e in enumerate(E)}
     relation_mapping = {r:i for i,r in enumerate(R)}
     
+    literals = np.random.rand(len(E),5)
+    
     train = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in train]
     valid = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in valid]
     test = [(entity_mapping[a],relation_mapping[b],entity_mapping[c]) for a,b,c in test]
     
     bs = 2048
-    train = pad(train,bs)
     
-    hypermodel = MyHyperModel(len(E),len(R),bs)
-    
-    tuner = RandomSearch(
-        hypermodel,
-        objective=kt.Objective("val_mrr", direction="max"),
-        max_trials=1,
-        seed=42,
-        overwrite=True,
-        project_name=None)
-    
-    tuner.search(np.asarray(train),np.ones(len(train)),
-             validation_data=(np.asarray(valid),np.ones(len(valid))),
-             epochs=1000,
+    model = build_model({'num_entities':len(E),
+                              'num_relations':len(R),
+                              'dim':100,
+                              'embedding_model':'DistMult',
+                              'literals':literals,
+                              'literal_activation':'tanh',
+                              'loss_function':'pairwize_hinge',
+                              'margin':1})
+   
+    model.fit(DataGenerator(train,batch_size=bs),
+             validation_data=DataGenerator(valid,batch_size=bs),
+             epochs=100,
              batch_size=bs,
-             verbose=2,
-             callbacks = [myCallBack(np.asarray(valid),bs=bs,train_data=np.asarray(train))
-                          ,EarlyStopping(monitor='val_mrr', patience=1)])
+             verbose=2)
              
-    tuner.results_summary()
-    
-    best_model = tuner.get_best_models(1)[0]
-    best_hyperparameters = tuner.get_best_hyperparameters(1)[0]
-    
-    best_model.fit(np.asarray(train),np.ones(len(train)),
-             epochs=1,
-             batch_size=bs)
-    
-    tmp = validate(best_model, 
-                   np.asarray(test),
-                   len(E),
-                   bs,
-                   np.asarray(train))
-    print(tmp)
                           
              
 if __name__ == '__main__':
