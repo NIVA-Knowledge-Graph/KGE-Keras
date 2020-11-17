@@ -11,6 +11,104 @@ import tensorflow as tf
 from random import choices
 EPSILON = 1e-6
 
+from rdflib import Graph, URIRef, Literal, Namespace
+import rdflib
+from rdflib.namespace import XSD, RDF
+UNIT = Namespace('http://qudt.org/vocab/unit#')
+from tqdm import tqdm
+
+import spacy
+VEC_SIZE = 300
+
+def isint(value):
+    try:
+        int(value)
+        return True
+    except ValueError:
+        return False
+
+class LiteralConverter:
+    def __init__(self,g,padding_value=0):
+        self.g = g
+        self.non_literal_entities = set(g.subjects()) | set([o for o in g.objects() if isinstance(o,URIRef)])
+        self.literal_predicates = set([p for p,o in g.predicate_objects() if isinstance(o,Literal)])
+        self.padding_value = padding_value
+        self.lang_models = {'xx':spacy.load('xx_ent_wiki_sm')}
+
+    def _process_string_literal(self,x):
+        if hasattr(x,'language'):
+            if x.language in self.lang_models:
+                doc = self.lang_models[x.language](str(x).lower())
+            else:
+                try: 
+                    self.lang_models[x.language] = spacy.load('%s_core_web_sm' % x.language)
+                    #self.lang_models[x.language] = spacy.load('%s_ent_wiki_sm' % x.language)
+                except: 
+                    return None
+                doc = self.lang_models[x.language](str(x).lower())
+        else:
+            doc = self.lang_models['xx'](str(x).lower())
+        v = doc.vector
+        if len(v) < 1:
+            v = np.zeros((VEC_SIZE,))
+        return v
+
+    def _process_literal(self,x):
+        if hasattr(x,'datatype') and (x.datatype == XSD['float'] or x.datatype == XSD['double']):
+            return [float(x)]
+        if hasattr(x,'datatype') and x.datatype == XSD['date']:
+            return URIRef('http://examples.org/date/%s' % str(x))
+        if hasattr(x,'datatype') and x.datatype == XSD['boolean']:
+            return [1] if bool(x) else [0]
+        if len(str(x)) == 4 and isint(x):
+            return URIRef('http://examples.org/date/%s' % str(x))
+        if hasattr(x,'datatype') and (x.datatype is None or x.datatype == XSD['string']):
+            return self._process_string_literal(x)
+        
+        return None
+
+    def fit(self):
+        out = defaultdict(dict)
+        vec_or_num = {}
+        array_ps = set()
+        for i,e in tqdm(enumerate(self.non_literal_entities),total=len(self.non_literal_entities),desc='Processing literals'):
+            for j,p in enumerate(self.literal_predicates):
+                tmp = set(self.g.objects(subject = e, predicate = p / RDF.value)) | set(self.g.objects(subject = e, predicate = p))
+                unit = set(self.g.objects(subject = e, predicate = p / UNIT.units))
+                
+                for t in tmp:
+                    t = self._process_literal(t)
+                    if t is None: 
+                        continue
+                    elif isinstance(t,URIRef):
+                        self.g.add((e,p,t))
+                    elif isinstance(t,(int,float)):
+                        out[p][e] = t
+                        vec_or_num[p] = 1
+                    else:
+                        out[p][e] = t
+                        vec_or_num[p] = len(t)
+                        
+        self.literals = {}
+        for e in self.non_literal_entities:
+            tmp = []
+            for p in self.literal_predicates:
+                if not p in vec_or_num: continue
+            
+                if e in out[p]:
+                    tmp.append(out[p][e])
+                else:
+                    tmp.append(np.zeros((vec_or_num[p],)))
+            self.literals[e] = np.asarray(tmp).flatten()
+            
+    def transform(self,entities):
+        return np.asarray([self.literals[e] for e in entities])
+    
+    def fit_transform(self,entities):
+        if not hasattr(self,'literals'):
+            self.fit()
+        return self.transform(entities)
+
 def load_kg(path):
     out = []
     with open(path,'r') as f:
