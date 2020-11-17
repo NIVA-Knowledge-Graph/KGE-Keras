@@ -33,35 +33,29 @@ class LiteralConverter:
         self.non_literal_entities = set(g.subjects()) | set([o for o in g.objects() if isinstance(o,URIRef)])
         self.literal_predicates = set([p for p,o in g.predicate_objects() if isinstance(o,Literal)])
         self.padding_value = padding_value
-        self.lang_models = {'xx':spacy.load('xx_ent_wiki_sm')}
+        self.lang_models = {'xx':spacy.load('xx_ent_wiki_sm'),'en':spacy.load('en_core_web_md')}
 
     def _process_string_literal(self,x):
-        if hasattr(x,'language'):
-            if x.language in self.lang_models:
-                doc = self.lang_models[x.language](str(x).lower())
-            else:
-                try: 
-                    self.lang_models[x.language] = spacy.load('%s_core_web_sm' % x.language)
-                    #self.lang_models[x.language] = spacy.load('%s_ent_wiki_sm' % x.language)
-                except: 
-                    return None
-                doc = self.lang_models[x.language](str(x).lower())
-        else:
-            doc = self.lang_models['xx'](str(x).lower())
+        doc = self.lang_models['en'](str(x))
+        
         v = doc.vector
         if len(v) < 1:
-            v = np.zeros((VEC_SIZE,))
+            v = self.padding_value*np.ones((VEC_SIZE,))
         return v
 
     def _process_literal(self,x):
         if hasattr(x,'datatype') and (x.datatype == XSD['float'] or x.datatype == XSD['double']):
             return [float(x)]
+        
         if hasattr(x,'datatype') and x.datatype == XSD['date']:
             return URIRef('http://examples.org/date/%s' % str(x))
+        
         if hasattr(x,'datatype') and x.datatype == XSD['boolean']:
             return [1] if bool(x) else [0]
+        
         if len(str(x)) == 4 and isint(x):
             return URIRef('http://examples.org/date/%s' % str(x))
+        
         if hasattr(x,'datatype') and (x.datatype is None or x.datatype == XSD['string']):
             return self._process_string_literal(x)
         
@@ -82,13 +76,11 @@ class LiteralConverter:
                         continue
                     elif isinstance(t,URIRef):
                         self.g.add((e,p,t))
-                    elif isinstance(t,(int,float)):
-                        out[p][e] = t
-                        vec_or_num[p] = 1
                     else:
                         out[p][e] = t
-                        vec_or_num[p] = len(t)
-                        
+                        if p not in vec_or_num: vec_or_num[p] = len(t)
+        
+        s=sum(i for k,i in vec_or_num.items())
         self.literals = {}
         for e in self.non_literal_entities:
             tmp = []
@@ -96,10 +88,12 @@ class LiteralConverter:
                 if not p in vec_or_num: continue
             
                 if e in out[p]:
-                    tmp.append(out[p][e])
+                    tmp.append(np.asarray(out[p][e]).reshape((1,-1)))
                 else:
-                    tmp.append(np.zeros((vec_or_num[p],)))
-            self.literals[e] = np.asarray(tmp).flatten()
+                    tmp.append(self.padding_value*np.ones((1,vec_or_num[p])))
+            tmp = np.concatenate(tmp,axis=1).reshape((-1,))
+            assert len(tmp) == s
+            self.literals[e] = tmp
             
     def transform(self,entities):
         return np.asarray([self.literals[e] for e in entities])
